@@ -1,7 +1,37 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { analyze, compress, compressFacts, expandDecision, DEFAULTS } = require('../src/sentinel-ir');
+const { analyze, analyzeAsync, compress, compressFacts, expandDecision, DEFAULTS } = require('../src/sentinel-ir');
+
+// Initialize the WASM parser before synchronous analysis tests run.
+test.before(async () => {
+    await require('../src/sentinel-ir').initializeWasm();
+});
+
+
+test('analyzeAsync initializes WASM and analyzes different source types', async () => {
+    const cases = [
+        {
+            source: 'function add(a, b) { return a + b; }',
+            expectedRisk: 'low'
+        },
+        {
+            source: 'const cp = require("child_process"); cp.exec("id");',
+            expectedRisk: 'critical'
+        },
+        {
+            source: 'function evaluate(value) { return value; }',
+            expectedRisk: 'low'
+        }
+    ];
+
+    for (const item of cases) {
+        const ir = await analyzeAsync(item.source);
+        assert.equal(ir.facts.ast, true);
+    assert.equal(ir.analysisStatus, 'complete');
+        assert.equal(ir.risk, item.expectedRisk);
+    }
+});
 
 const SERVER = `
     const express = require("express");
@@ -109,7 +139,7 @@ test('compress produces the documented top-level shape', () => {
     const ir = analyze(SERVER, { target: 'src/server.js', pressure: 0.2, confidence: 0.9, budget: 0.1 });
     const compressed = compress(ir);
 
-    assert.deepEqual(Object.keys(compressed), ['mission', 'world', 'constraints', 'forbidden', 'summary', 'facts']);
+    assert.deepEqual(Object.keys(compressed), ['analysisStatus', 'mission', 'world', 'constraints', 'forbidden', 'summary', 'facts']);
     assert.deepEqual(compressed.mission, { target: 'src/server.js', objective: 'filesystem_simplification' });
     assert.deepEqual(compressed.world, { pressure: 0.2, confidence: 0.9, budget: 0.1, risk: ir.risk });
     assert.deepEqual(compressed.constraints, ir.constraints);
@@ -153,9 +183,11 @@ test('compressFacts marks missing or unparsed facts as ast:false with a reason',
 });
 
 test('unparseable source falls back to text heuristics and says so', () => {
-    const compressed = compress(analyze('function broken( {{{ eval(', { target: 'x.js' }));
-
-    assert.equal(compressed.facts.ast, false);
+    const ir = analyze('function broken( {{{ eval(', { target: 'x.js' });
+    const compressed = compress(ir);
+    assert.equal(ir.analysisStatus, 'incomplete');
+    assert.equal(compressed.analysisStatus, 'incomplete');
+assert.equal(compressed.facts.ast, false);
     assert.equal(typeof compressed.facts.reason, 'string');
     assert.equal(compressed.world.risk, 'critical');
     assert.deepEqual(compressed.forbidden, ['eval']);

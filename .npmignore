@@ -1,0 +1,7 @@
+*.bak
+*.before-*
+.*.bak
+.package-smoke-clean/
+.package-smoke-test/
+sentinel-pack-check.json
+test-link.js

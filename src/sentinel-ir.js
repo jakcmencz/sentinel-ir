@@ -27,6 +27,7 @@
  */
 
 const AstFacts = require("./ast-facts");
+const TreeParser = require("./tree-parser");
 
 const DEFAULTS = Object.freeze({
     pressure: 0.5,
@@ -226,12 +227,14 @@ function analyze(content, options = {}) {
         budget: opts.budget,
         forbidden: inferForbidden(content, facts),
         summary: summarize(content, facts),
+        analysisStatus: facts.ast === true ? 'complete' : 'incomplete',
         facts
     };
 }
 
 function compress(ir) {
     return {
+        analysisStatus: ir.facts?.ast === true ? 'complete' : 'incomplete',
         mission: {
             target: ir.target,
             objective: ir.objective
@@ -260,4 +263,21 @@ function expandDecision(decision, sourceIr) {
     };
 }
 
-module.exports = { analyze, compress, compressFacts, expandDecision, DEFAULTS };
+async function initializeWasm() {
+    await TreeParser.initWasm();
+}
+
+async function analyzeAsync(content, options = {}) {
+    await initializeWasm();
+    return analyze(content, options);
+}
+
+module.exports = {
+    analyze,
+    analyzeAsync,
+    compress,
+    compressFacts,
+    expandDecision,
+    DEFAULTS,
+    initializeWasm
+};

@@ -6,6 +6,12 @@ const SentinelIR = require('../src/sentinel-ir');
 
 const analyzeAt = (target, content) => SentinelIR.analyze(content, { target });
 
+// Initialize the WASM parser before synchronous AST extraction tests run.
+test.before(async () => {
+    await SentinelIR.initializeWasm();
+});
+
+
 test('routes come from call syntax, with method and path', () => {
     const facts = AstFacts.extract(`
         const express = require("express");

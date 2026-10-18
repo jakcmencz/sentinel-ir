@@ -22,10 +22,10 @@ the IR says so (`facts.ast: false`).
 
   | file | raw chars | IR chars |
   |---|---:|---:|
-  | `src/ast-facts.js` | 21,823 | 421 |
-  | `src/sentinel-ir.js` | 8,680 | 439 |
-  | `src/tree-parser.js` | 3,084 | 412 |
-  | `examples/basic.js` | 537 | 428 |
+  | `src/ast-facts.js` | 21,823 | 449 |
+  | `src/sentinel-ir.js` | 9,123 | 515 |
+  | `src/tree-parser.js` | 4,393 | 465 |
+  | `examples/basic.js` | 600 | 461 |
 
   For very small files the IR is about as large as the source; it does not pay
   off there. These are character counts, not billed tokens of any specific model.
@@ -55,12 +55,12 @@ to rewrite code it can no longer see.
 npm install sentinel-ir
 ```
 
-Requires Node.js 20 or newer; `tree-sitter` builds a native binding on install.
+Requires Node.js 20 or newer. The native `tree-sitter` packages are optional dependencies. When no parser has been initialized, `analyze()` attempts to initialize the native parser and does not automatically fall back to WebAssembly if that fails. Use `analyzeAsync()` to initialize the bundled WebAssembly parser before analysis.
 
 ## Usage
 
 ```js
-const { analyze, compress } = require("sentinel-ir");
+const { analyzeAsync, compress } = require("sentinel-ir");
 
 const code = `
 const express = require("express");
@@ -70,14 +70,22 @@ app.post("/upload", (req, res) => { fs.writeFileSync("/tmp/x", req.body); res.en
 app.listen(process.env.PORT);
 `;
 
-const ir = analyze(code, { target: "src/server.js" });
-console.log(JSON.stringify(compress(ir), null, 2));
+async function main() {
+  const ir = await analyzeAsync(code, { target: "src/server.js" });
+  console.log(JSON.stringify(compress(ir), null, 2));
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
 ```
 
 Output:
 
 ```json
 {
+  "analysisStatus": "complete",
   "mission": { "target": "src/server.js", "objective": "filesystem_simplification" },
   "world": { "pressure": 0.5, "confidence": 0.75, "budget": 0.015, "risk": "medium" },
   "constraints": ["preserve_api", "avoid_breaking_changes"],
@@ -98,12 +106,31 @@ Output:
 Run `npm run example -- path/to/file.js` to see the IR of any file and its size
 next to the raw source.
 
+## WebAssembly parser
+
+`analyzeAsync()` initializes the bundled WebAssembly parser automatically.
+To initialize it explicitly without analyzing source:
+
+```js
+const { initializeWasm } = require("sentinel-ir");
+
+initializeWasm().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+```
+
 ## API
 
 ### `analyze(content, options?)` → `ir`
 
-Parses `content` (a JavaScript source string) and returns the full IR,
-including the raw AST facts under `ir.facts`.
+Synchronous analysis. If no parser has been initialized, it attempts to
+load the optional native `tree-sitter` packages. If loading fails, the
+result is `analysisStatus: "incomplete"` and uses text-based fallback
+heuristics. It does not automatically switch to WebAssembly.
+
+Use `analyzeAsync()` for analysis with the bundled WebAssembly parser.
+Both APIs return the full IR, including raw AST facts under `ir.facts`.
 
 All options are optional. The library keeps no state between calls; these are
 your own signals, passed through into `world` and used for `objective` /
@@ -121,7 +148,19 @@ A value that is not a finite number in its range (`"0.4"`, `NaN`, `Infinity`,
 `-1`, `1.5`, `{}`) is ignored and the default is used; it is not clamped. Zero
 is a valid value. The defaults are exported as `DEFAULTS`.
 
-### `compress(ir)` → `{ mission, world, constraints, forbidden, summary, facts }`
+### `analyzeAsync(content, options?)` → `Promise<ir>`
+
+Initializes the bundled WebAssembly parser and then analyzes the JavaScript
+source. Use it on platforms where the optional native parser is unavailable.
+Parser initialization failures reject the promise; source-analysis failures
+are represented by `analysisStatus: "incomplete"`.
+
+### `initializeWasm()` → `Promise<void>`
+
+Initializes the bundled WebAssembly parser without analyzing source.
+Use `analyzeAsync()` for the usual one-step workflow.
+
+### `compress(ir)` → `{ analysisStatus, mission, world, constraints, forbidden, summary, facts }`
 
 The compact projection meant for the prompt. `facts` is `compressFacts(ir.facts)`.
 
@@ -159,9 +198,10 @@ Joins an LLM decision with the IR it was made on:
 ## Origin
 
 Extracted from the Sentinel project, where it is the input layer for an LLM
-advisor. `src/ast-facts.js` and `src/tree-parser.js` are unchanged copies;
-`src/sentinel-ir.js` is the same logic with Sentinel's internal memory model
-replaced by the `options` argument.
+advisor. This package contains adapted versions of `src/ast-facts.js` and
+`src/tree-parser.js` for its parser backends. `src/sentinel-ir.js` adapts the
+surrounding logic to use caller-supplied `options` instead of Sentinel's
+internal memory model.
 
 ## Development
 
@@ -180,3 +220,18 @@ npm test
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+## Analysis status
+
+`analyze()` and `compress()` expose `analysisStatus`:
+
+- `complete`: AST extraction succeeded and the source parsed without syntax errors.
+- `incomplete`: AST extraction was unavailable or the source did not parse cleanly; analysis may rely on text heuristics.
+
+The `risk` field remains a risk estimate, not a guarantee of safety. When
+`analysisStatus` is `incomplete`, a result such as `risk: "low"` must not be
+treated as evidence that the source is safe. Consumers making automated
+decisions should abstain or require additional analysis in this state.
+
+`analysisStatus` is an additive field in the public output. Consumers that
+validate exact object keys may need to account for it.
