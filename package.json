@@ -6,7 +6,8 @@
   "files": [
     "src/",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "NOTICE"
   ],
   "scripts": {
     "test": "node --test test/*.test.js",
@@ -33,7 +34,7 @@
   "bugs": {
     "url": "https://gitlab.com/jakubrojicek11/sentinel-ir/-/issues"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "engines": {
     "node": ">=20"
   },
