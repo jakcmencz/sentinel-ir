@@ -315,7 +315,7 @@ path don't get to look harmless.
 ### Options: your signals, not ours
 
 `pressure`, `confidence` and `budget` are not computed by the library. In
-Sentinel they came from its memory (stability, rollback history, cost limits).
+Sentinel they were derived from its internal memory.
 In the standalone package you pass them in, and they are copied into `world`
 so the model sees your context:
 
@@ -433,7 +433,7 @@ async function review(path, callModel) {
 ```
 
 In Sentinel the model's answer then goes through deterministic gates (output
-checks, safety rules, tests) before anything is committed. The IR is the input
+checks, safety and governance rules) before anything is committed. The IR is the input
 layer of that design. It doesn't replace the gates.
 
 ### Measuring the token savings yourself
