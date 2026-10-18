@@ -1,0 +1,44 @@
+{
+  "name": "sentinel-ir",
+  "version": "0.1.0",
+  "description": "Structural IR for AI reasoning over code: turns JavaScript into compact tree-sitter facts for an LLM instead of the raw file",
+  "main": "src/sentinel-ir.js",
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "example": "node examples/basic.js"
+  },
+  "keywords": [
+    "llm",
+    "ai",
+    "intermediate-representation",
+    "ir",
+    "tree-sitter",
+    "ast",
+    "javascript",
+    "static-analysis",
+    "code-analysis",
+    "prompt",
+    "token-savings"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://gitlab.com/jakubrojicek11/sentinel-ir.git"
+  },
+  "homepage": "https://gitlab.com/jakubrojicek11/sentinel-ir#readme",
+  "bugs": {
+    "url": "https://gitlab.com/jakubrojicek11/sentinel-ir/-/issues"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "tree-sitter": "^0.21.1",
+    "tree-sitter-javascript": "^0.21.4"
+  }
+}

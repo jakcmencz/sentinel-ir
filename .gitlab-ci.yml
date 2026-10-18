@@ -1,0 +1,19 @@
+stages:
+  - test
+
+# tree-sitter ships native bindings, so test on every supported Node line.
+unit_tests:
+  stage: test
+  image: node:${NODE_VERSION}
+  parallel:
+    matrix:
+      - NODE_VERSION: ["20", "22", "24"]
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - npm test
