@@ -130,6 +130,16 @@ function callTarget(callNode) {
         };
     }
 
+    if (callee.type === "subscript_expression") {
+        const object = field(callee, "object");
+        const index = field(callee, "index");
+        return {
+            object: object ? text(object).split("\n")[0] : null,
+            property: stringLiteral(index),
+            raw: text(callee).split("\n")[0]
+        };
+    }
+
     return { object: null, property: null, raw: text(callee).split("\n")[0] };
 }
 
@@ -140,6 +150,254 @@ function args(callNode) {
 
 function rootObjectOf(objectText) {
     return String(objectText || "").split(".")[0].replace(/\(.*$/, "").trim();
+}
+
+
+// Resolve whether a bare dynamic-code name is shadowed by a local binding.
+// This is a conservative AST-based scope check, not a complete JS resolver.
+const FUNCTION_SCOPE_TYPES = new Set([
+    "function_declaration", "function_expression", "arrow_function",
+    "generator_function_declaration", "generator_function", "method_definition"
+]);
+
+const LEXICAL_SCOPE_TYPES = new Set([
+    "program", "statement_block", "switch_body", "catch_clause",
+    "for_statement", "for_in_statement", "for_of_statement"
+]);
+
+function bindingPatternHasName(node, name) {
+    if (!node) return false;
+
+    if (node.type === "identifier" ||
+        node.type === "shorthand_property_identifier_pattern") {
+        return text(node) === name;
+    }
+
+    // Default parameter: only its left side declares a binding.
+    if (node.type === "assignment_pattern") {
+        const left = field(node, "left") ||
+            (node.namedChildren || [])[0];
+        return bindingPatternHasName(left, name);
+    }
+
+    // Object destructuring: the value side is the bound name.
+    if (node.type === "pair_pattern") {
+        const value = field(node, "value");
+        const children = node.namedChildren || [];
+        return bindingPatternHasName(
+            value || children[children.length - 1], name
+        );
+    }
+
+    return (node.namedChildren || []).some(
+        child => bindingPatternHasName(child, name)
+    );
+}
+
+function declarationNameIs(node, name) {
+    return text(field(node, "name")) === name;
+}
+
+function lexicalDeclarationHasName(node, name) {
+    if (!node) return false;
+
+    if (node.type === "variable_declarator") {
+        return bindingPatternHasName(field(node, "name"), name);
+    }
+
+    if (FUNCTION_SCOPE_TYPES.has(node.type) ||
+        node.type === "class_expression") {
+        return false;
+    }
+
+    return (node.namedChildren || []).some(
+        child => lexicalDeclarationHasName(child, name)
+    );
+}
+
+
+function importStatementHasBinding(statement, name) {
+    const clause = (statement.namedChildren || []).find(
+        child => child.type === "import_clause"
+    );
+
+    if (!clause) return false;
+
+    for (const child of clause.namedChildren || []) {
+        // Default import: import Function from "module"
+        if (child.type === "identifier" && text(child) === name) {
+            return true;
+        }
+
+        // Namespace import: import * as Function from "module"
+        if (child.type === "namespace_import") {
+            const children = child.namedChildren || [];
+            const local = field(child, "alias") ||
+                children[children.length - 1];
+
+            if (local && text(local) === name) return true;
+        }
+
+        // Named imports: import { run as Function } from "module"
+        if (child.type === "named_imports") {
+            for (const specifier of child.namedChildren || []) {
+                if (specifier.type !== "import_specifier") continue;
+
+                const children = specifier.namedChildren || [];
+                const local = field(specifier, "alias") ||
+                    (children.length >= 2
+                        ? children[children.length - 1]
+                        : field(specifier, "name") || children[0]);
+
+                if (local && text(local) === name) return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+function lexicalScopeHasBinding(scope, name) {
+    if (scope.type === "catch_clause") {
+        const parameter = field(scope, "parameter") ||
+            (scope.namedChildren || []).find(
+                child => child.type === "identifier" ||
+                         child.type === "catch_formal_parameter"
+            );
+
+        if (bindingPatternHasName(parameter, name)) return true;
+    }
+
+    function scan(node) {
+        for (const child of node.namedChildren || []) {
+            if (child.type === "import_statement" &&
+                importStatementHasBinding(child, name)) {
+                return true;
+            }
+            if (FUNCTION_SCOPE_TYPES.has(child.type)) {
+                if (child.type === "function_declaration" &&
+                    declarationNameIs(child, name)) {
+                    return true;
+                }
+                continue;
+            }
+
+            if (child.type === "class_declaration") {
+                if (declarationNameIs(child, name)) return true;
+                continue;
+            }
+
+            // These create their own lexical scopes.
+            if (LEXICAL_SCOPE_TYPES.has(child.type)) continue;
+
+            if (child.type === "lexical_declaration" &&
+                lexicalDeclarationHasName(child, name)) {
+                return true;
+            }
+
+            if (scan(child)) return true;
+        }
+
+        return false;
+    }
+
+    return scan(scope);
+}
+
+function varScopeHasBinding(scope, name) {
+    function scan(node) {
+        for (const child of node.namedChildren || []) {
+            // A nested function has its own var scope.
+            if (FUNCTION_SCOPE_TYPES.has(child.type)) continue;
+
+            if (child.type === "variable_declarator") {
+                if (bindingPatternHasName(field(child, "name"), name)) {
+                    let parent = child.parent;
+
+                    while (parent && parent !== scope) {
+                        if (parent.type === "lexical_declaration") break;
+                        if (parent.type === "variable_declaration") return true;
+                        parent = parent.parent;
+                    }
+                }
+                continue;
+            }
+
+            if (scan(child)) return true;
+        }
+
+        return false;
+    }
+
+    return scan(scope);
+}
+
+function functionScopeHasBinding(scope, name) {
+    // A method name is a property name, not a lexical binding.
+    // Named function declarations and expressions do create bindings.
+    if (
+        ["function_declaration", "function_expression",
+         "generator_function_declaration", "generator_function"]
+            .includes(scope.type) &&
+        declarationNameIs(scope, name)
+    ) {
+        return true;
+    }
+
+    const parameters = field(scope, "parameters") ||
+        field(scope, "parameter");
+
+    if (bindingPatternHasName(parameters, name)) return true;
+
+    for (const child of scope.namedChildren || []) {
+        if (child.type === "formal_parameters" &&
+            bindingPatternHasName(child, name)) {
+            return true;
+        }
+    }
+
+    return varScopeHasBinding(scope, name);
+}
+
+function isNameShadowed(reference, name) {
+    let current = reference;
+
+    while (current) {
+        if (FUNCTION_SCOPE_TYPES.has(current.type) &&
+            functionScopeHasBinding(current, name)) {
+            return true;
+        }
+
+        if (LEXICAL_SCOPE_TYPES.has(current.type) &&
+            lexicalScopeHasBinding(current, name)) {
+            return true;
+        }
+
+        // Top-level var declarations also shadow the global name.
+        if (current.type === "program" &&
+            varScopeHasBinding(current, name)) {
+            return true;
+        }
+
+        current = current.parent;
+    }
+
+    return false;
+}
+
+
+function isUnshadowedGlobalThis(callee) {
+    if (!callee ||
+        (callee.type !== "member_expression" &&
+         callee.type !== "subscript_expression")) {
+        return false;
+    }
+
+    const receiver = field(callee, "object");
+
+    return receiver?.type === "identifier" &&
+        text(receiver) === "globalThis" &&
+        !isNameShadowed(receiver, "globalThis");
 }
 
 // ---------------------------------------------------------------------------
@@ -213,10 +471,32 @@ function extract(content) {
                 break;
             case "new_expression": {
                 const constructor = field(node, "constructor");
-                if (constructor && text(constructor) === "Function") {
+                const constructorObject = constructor && field(constructor, "object");
+                const constructorProperty = constructor && field(constructor, "property");
+                const constructorIndex = constructor && field(constructor, "index");
+
+                const directFunction =
+                    constructor?.type === "identifier" &&
+                    text(constructor) === "Function" &&
+                    !isNameShadowed(constructor, "Function");
+
+                const globalFunction =
+                    constructor?.type === "member_expression" &&
+                    text(constructorObject) === "globalThis" &&
+                    isUnshadowedGlobalThis(constructor) &&
+                    text(constructorProperty) === "Function";
+
+                const computedGlobalFunction =
+                    constructor?.type === "subscript_expression" &&
+                    text(constructorObject) === "globalThis" &&
+                    isUnshadowedGlobalThis(constructor) &&
+                    stringLiteral(constructorIndex) === "Function";
+
+                if (directFunction || globalFunction || computedGlobalFunction) {
+                    const evidence = "new " + text(constructor);
                     facts.operations.dynamicEval = true;
-                    calls.dynamic.add("new Function");
-                    signal("dynamic_code", "new Function", node);
+                    calls.dynamic.add(evidence);
+                    signal("dynamic_code", evidence, node);
                 }
                 break;
             }
@@ -234,7 +514,15 @@ function extract(content) {
                 break;
             case "import_statement": {
                 const source = stringLiteral(field(node, "source"));
-                if (source) imports.add(source);
+                if (source) {
+                    imports.add(source);
+                    if (CHILD_PROCESS_MODULES.has(source)) {
+                        const evidence = "import(child_process)";
+                        facts.operations.childProcess = true;
+                        calls.process.add(evidence);
+                        signal("child_process_import", evidence, node);
+                    }
+                }
                 break;
             }
             case "binary_expression":
@@ -418,11 +706,31 @@ function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings 
         return;
     }
 
-    // Dynamic code execution
-    if (!object && property === "eval") {
+    // Dynamic code execution. Do not flag arbitrary object methods named eval.
+    if (
+        (!object && property === "eval" &&
+         !isNameShadowed(field(node, "function"), "eval")) ||
+        (object === "globalThis" && property === "eval" &&
+         isUnshadowedGlobalThis(field(node, "function")))
+    ) {
+        const evidence = raw || "eval";
         facts.operations.dynamicEval = true;
-        calls.dynamic.add("eval");
-        signal("dynamic_code", "eval", node);
+        calls.dynamic.add(evidence);
+        signal("dynamic_code", evidence, node);
+        return;
+    }
+
+    // Function(...) can construct executable code even without the new keyword.
+    if (
+        (!object && property === "Function" &&
+         !isNameShadowed(field(node, "function"), "Function")) ||
+        (object === "globalThis" && property === "Function" &&
+         isUnshadowedGlobalThis(field(node, "function")))
+    ) {
+        const evidence = raw || "Function";
+        facts.operations.dynamicEval = true;
+        calls.dynamic.add(evidence);
+        signal("dynamic_code", evidence, node);
         return;
     }
 

@@ -239,3 +239,136 @@ test('sources above the tree-sitter direct input limit are still parsed', () => 
     assert.deepEqual(facts.routes, ['GET /late/route']);
     assert.deepEqual(facts.env, ['LATE_PORT']);
 });
+
+const staticChildProcessImportCases = [
+    ['namespace import', 'import * as cp from "node:child_process";'],
+    ['named import', 'import { execSync } from "node:child_process";'],
+    ['renamed import', 'import { execSync as run } from "node:child_process";'],
+    ['side-effect import', 'import "node:child_process";'],
+    ['unprefixed import', 'import { execSync } from "child_process";']
+];
+
+for (const [name, source] of staticChildProcessImportCases) {
+    test(`static ES ${name} records child_process capability`, () => {
+        const facts = AstFacts.extract(source);
+
+        assert.equal(facts.ast, true, 'source must parse successfully');
+        assert.equal(
+            facts.operations.childProcess,
+            true,
+            'static import should register child_process capability'
+        );
+        assert.equal(
+            facts.operations.processSpawn,
+            false,
+            'import alone does not prove a process was spawned'
+        );
+        assert.ok(
+            facts.dangerous.includes('child_process'),
+            'dangerous capabilities should include child_process'
+        );
+        assert.equal(
+            AstFacts.riskOf(facts),
+            'critical',
+            'risk should follow the documented child_process policy'
+        );
+        assert.ok(
+            facts.riskSignals.some(s => s.signal === 'child_process_import'),
+            'the capability import should have a risk signal'
+        );
+    });
+}
+
+const dynamicExecutionRegressionCases = [
+    ['globalThis.eval()', 'globalThis.eval(input);'],
+    ['computed globalThis eval', 'globalThis["eval"](input);'],
+    ['Function() without new', 'Function("return 1");'],
+    ['globalThis.Function constructor', 'new globalThis.Function("return 1");'],
+    ['computed globalThis Function constructor', 'new globalThis["Function"]("return 1");']
+];
+
+for (const [name, source] of dynamicExecutionRegressionCases) {
+    test(`dynamic code detection covers ${name}`, () => {
+        const facts = AstFacts.extract(source);
+
+        assert.equal(facts.ast, true, 'source must parse successfully');
+        assert.equal(
+            facts.operations.dynamicEval,
+            true,
+            'dynamic code execution must be identified'
+        );
+        assert.equal(AstFacts.riskOf(facts), 'critical');
+        assert.ok(
+            facts.riskSignals.some(signal => signal.signal === 'dynamic_code'),
+            'dynamic code must have a risk signal'
+        );
+    });
+}
+
+test('computed child_process method detects actual process spawning', () => {
+    const facts = AstFacts.extract(
+        'const cp = require("child_process"); cp["execSync"]("example");'
+    );
+
+    assert.equal(facts.ast, true);
+    assert.equal(facts.operations.childProcess, true);
+    assert.equal(
+        facts.operations.processSpawn,
+        true,
+        'computed execSync call must be identified as process spawning'
+    );
+    assert.ok(facts.dangerous.includes('process_spawn'));
+    assert.equal(AstFacts.riskOf(facts), 'critical');
+    assert.ok(
+        facts.riskSignals.some(signal => signal.signal === 'process_spawn')
+    );
+});
+
+test('an ordinary object method named eval is not dynamic code by itself', () => {
+    const facts = AstFacts.extract(
+        'const parser = { eval(input) { return input; } }; parser.eval(input);'
+    );
+
+    assert.equal(facts.ast, true);
+    assert.equal(
+        facts.operations.dynamicEval,
+        false,
+        'a method merely named eval must not be misclassified'
+    );
+});
+
+const shadowingRegressionCases = [
+    ['global Function call', 'Function("return 1");', true],
+    ['global Function constructor', 'new Function("return 1");', true],
+    ['explicit global Function with local shadow',
+        'const Function = value => value; new globalThis.Function("return 1");', true],
+    ['local Function variable',
+        'const Function = value => value; Function("ordinary text");', false],
+    ['Function parameter',
+        'function run(Function) { return Function("ordinary text"); }', false],
+    ['local Function constructor name',
+        'function run(Function) { return new Function("ordinary text"); }', false],
+    ['local eval variable',
+        'const eval = value => value; eval("ordinary text");', false],
+    ['eval parameter',
+        'function run(eval) { return eval(input); }', false],
+    ['explicit global eval despite local shadow',
+        'const eval = value => value; globalThis.eval(input);', true]
+];
+
+for (const [name, source, expected] of shadowingRegressionCases) {
+    test(`shadowing: ${name}`, () => {
+        const facts = AstFacts.extract(source);
+
+        assert.equal(facts.ast, true, 'source must parse successfully');
+        assert.equal(
+            facts.operations.dynamicEval,
+            expected,
+            'dynamic execution should match the resolved kind of reference'
+        );
+        assert.equal(
+            AstFacts.riskOf(facts),
+            expected ? 'critical' : 'low'
+        );
+    });
+}

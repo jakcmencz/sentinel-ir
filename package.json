@@ -1,6 +1,6 @@
 {
   "name": "sentinel-ir",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Structural IR for AI reasoning over code: turns JavaScript into compact tree-sitter facts for an LLM instead of the raw file",
   "main": "src/sentinel-ir.js",
   "files": [
