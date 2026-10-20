@@ -504,7 +504,7 @@ function extract(content) {
                 visitMember(node, { facts, env, signal });
                 break;
             case "subscript_expression":
-                visitSubscript(node, { env });
+                visitSubscript(node, { env, signal });
                 break;
             case "assignment_expression":
                 visitAssignment(node, { exportsFound });
@@ -555,81 +555,347 @@ function extract(content) {
 //   const cp = require("child_process")     -> modules: cp
 //   const { exec: sh } = require("child_process") -> functions: sh
 //   import { spawn } from "node:child_process"    -> functions: spawn
+function spawnRootIdentifierNode(node) {
+    let current = node;
+    while (current &&
+        (current.type === "member_expression" ||
+         current.type === "subscript_expression")) {
+        current = field(current, "object");
+    }
+    return current?.type === "identifier" ? current : null;
+}
+
+function spawnScopeKey(scope) {
+    if (!scope) return "";
+    return `${scope.type}:${scope.startIndex}:${scope.endIndex}`;
+}
+
+function spawnScopeDeclaresBinding(scope, name) {
+    if (FUNCTION_SCOPE_TYPES.has(scope.type)) {
+        return functionScopeHasBinding(scope, name);
+    }
+
+    if (scope.type === "program") {
+        return lexicalScopeHasBinding(scope, name) ||
+            varScopeHasBinding(scope, name);
+    }
+
+    if (LEXICAL_SCOPE_TYPES.has(scope.type)) {
+        return lexicalScopeHasBinding(scope, name);
+    }
+
+    return false;
+}
+
+function spawnNearestBindingScope(reference, name) {
+    let current = reference;
+
+    while (current) {
+        if (
+            (FUNCTION_SCOPE_TYPES.has(current.type) ||
+             LEXICAL_SCOPE_TYPES.has(current.type) ||
+             current.type === "program") &&
+            spawnScopeDeclaresBinding(current, name)
+        ) {
+            return current;
+        }
+
+        current = current.parent;
+    }
+
+    return null;
+}
+
+function spawnResolvesBinding(reference, name, kind, bindings) {
+    const scope = spawnNearestBindingScope(reference, name);
+    if (!scope) return false;
+
+    const scoped = kind === "modules"
+        ? bindings.moduleScopes
+        : bindings.functionScopes;
+
+    return Boolean(scoped.get(spawnScopeKey(scope))?.has(name));
+}
+
 function spawnBindingsOf(root) {
     const modules = new Set();
     const functions = new Set();
+    const moduleScopes = new Map();
+    const functionScopes = new Map();
 
-    const bindNames = (target, source) => {
+    const addScoped = (map, scope, name) => {
+        if (!scope || !name) return false;
+
+        let names = map.get(spawnScopeKey(scope));
+        if (!names) {
+            names = new Set();
+            map.set(spawnScopeKey(scope), names);
+        }
+
+        const existed = names.has(name);
+        names.add(name);
+        return !existed;
+    };
+
+    function declarationScopeOf(declarator) {
+        const isVar = declarator.parent?.type === "variable_declaration";
+        let current = declarator.parent?.parent;
+
+        while (current) {
+            if (current.type === "program") return current;
+
+            if (isVar
+                ? FUNCTION_SCOPE_TYPES.has(current.type)
+                : LEXICAL_SCOPE_TYPES.has(current.type)) {
+                return current;
+            }
+
+            current = current.parent;
+        }
+
+        return root;
+    }
+
+    function importScopeOf(node) {
+        let current = node.parent;
+
+        while (current) {
+            if (current.type === "program") return current;
+            if (LEXICAL_SCOPE_TYPES.has(current.type)) return current;
+            current = current.parent;
+        }
+
+        return root;
+    }
+
+    const bindNames = (target, source, scope) => {
         if (!target || !SPAWN_MODULES.has(source)) return;
+
         if (target.type === "identifier") {
-            modules.add(text(target));
+            const name = text(target);
+            modules.add(name);
+            addScoped(moduleScopes, scope, name);
             return;
         }
-        // Destructuring: every bound local name is a spawn function.
+
         walk(target, node => {
-            if (node.type === "shorthand_property_identifier_pattern") functions.add(text(node));
+            if (node.type === "shorthand_property_identifier_pattern") {
+                const name = text(node);
+                functions.add(name);
+                addScoped(functionScopes, scope, name);
+            }
+
             if (node.type === "pair_pattern") {
-                // `{ exec: sh }` binds the local name, which is the pattern's tail.
                 const children = node.namedChildren || [];
                 const value = children[children.length - 1];
-                if (value && value.type === "identifier") functions.add(text(value));
+
+                if (value?.type === "identifier") {
+                    const name = text(value);
+                    functions.add(name);
+                    addScoped(functionScopes, scope, name);
+                }
             }
         });
     };
 
+    // First pass: preserve existing require/import/destructuring support.
     walk(root, node => {
         if (node.type === "variable_declarator") {
-            // `await import("child_process")` binds exactly like `require`.
             let value = field(node, "value");
-            if (value && value.type === "await_expression") {
-                value = field(value, "argument") || (value.namedChildren || [])[0];
+
+            if (value?.type === "await_expression") {
+                value = field(value, "argument") ||
+                    (value.namedChildren || [])[0];
             }
-            if (value && value.type === "call_expression") {
+
+            if (value?.type === "call_expression") {
                 const { object, property } = callTarget(value);
-                if (!object && (property === "require" || property === "import")) {
-                    bindNames(field(node, "name"), stringLiteral(args(value)[0]));
+
+                if (!object &&
+                    (property === "require" || property === "import")) {
+                    bindNames(
+                        field(node, "name"),
+                        stringLiteral(args(value)[0]),
+                        declarationScopeOf(node)
+                    );
                 }
             }
+
             return;
         }
 
         if (node.type === "import_statement") {
             const source = stringLiteral(field(node, "source"));
             if (!source || !SPAWN_MODULES.has(source)) return;
+
+            const scope = importScopeOf(node);
+
             walk(node, child => {
                 if (child.type === "import_specifier") {
-                    const alias = field(child, "alias") || field(child, "name");
-                    if (alias) functions.add(text(alias));
-                } else if (child.type === "namespace_import" || child.type === "import_clause") {
-                    const name = field(child, "name") || (child.namedChildren || [])[0];
-                    if (name && name.type === "identifier") modules.add(text(name));
+                    const local = field(child, "alias") ||
+                        field(child, "name");
+
+                    if (local) {
+                        const name = text(local);
+                        functions.add(name);
+                        addScoped(functionScopes, scope, name);
+                    }
+                } else if (
+                    child.type === "namespace_import" ||
+                    child.type === "import_clause"
+                ) {
+                    const local = field(child, "name") ||
+                        (child.namedChildren || [])[0];
+
+                    if (local?.type === "identifier") {
+                        const name = text(local);
+                        modules.add(name);
+                        addScoped(moduleScopes, scope, name);
+                    }
                 }
             });
         }
     });
 
-    return { modules, functions };
+    const declarators = [];
+    walk(root, node => {
+        if (node.type === "variable_declarator") {
+            declarators.push(node);
+        }
+    });
+
+    // Repeated passes support simple chains such as run2 = run.
+    let changed = true;
+    let pass = 0;
+
+    while (changed && pass <= declarators.length) {
+        changed = false;
+        pass++;
+
+        for (const node of declarators) {
+            const target = field(node, "name");
+            if (target?.type !== "identifier") continue;
+
+            let value = field(node, "value");
+
+            if (value?.type === "await_expression") {
+                value = field(value, "argument") ||
+                    (value.namedChildren || [])[0];
+            }
+
+            if (!value) continue;
+
+            const name = text(target);
+            const scope = declarationScopeOf(node);
+
+            if (
+                value.type === "member_expression" ||
+                value.type === "subscript_expression"
+            ) {
+                const receiver = spawnRootIdentifierNode(
+                    field(value, "object")
+                );
+
+                const propertyNode = value.type === "member_expression"
+                    ? field(value, "property")
+                    : field(value, "index");
+
+                const property = propertyNode?.type === "string"
+                    ? stringLiteral(propertyNode)
+                    : propertyNode?.type === "template_string"
+                        ? stringLiteral(propertyNode)
+                        : propertyNode ? text(propertyNode) : null;
+
+                if (
+                    receiver &&
+                    SPAWN_FUNCTIONS.has(property) &&
+                    spawnResolvesBinding(
+                        receiver, text(receiver), "modules",
+                        { moduleScopes, functionScopes }
+                    )
+                ) {
+                    functions.add(name);
+
+                    if (addScoped(functionScopes, scope, name)) {
+                        changed = true;
+                    }
+                }
+            } else if (value.type === "identifier") {
+                const sourceName = text(value);
+                const bindings = { moduleScopes, functionScopes };
+
+                if (spawnResolvesBinding(
+                    value, sourceName, "modules", bindings
+                )) {
+                    modules.add(name);
+
+                    if (addScoped(moduleScopes, scope, name)) {
+                        changed = true;
+                    }
+                } else if (spawnResolvesBinding(
+                    value, sourceName, "functions", bindings
+                )) {
+                    functions.add(name);
+
+                    if (addScoped(functionScopes, scope, name)) {
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+
+    return { modules, functions, moduleScopes, functionScopes };
 }
 
-function isSpawnCall({ object, property, raw }, host, spawnBindings) {
+function isSpawnCall({ object, property, raw, callee }, host, spawnBindings) {
     if (!property) return false;
 
-    // Anything imported from a spawning module spawns, whatever it is called.
-    if (object ? spawnBindings.modules.has(host) : spawnBindings.functions.has(property)) return true;
+    const receiver = object ? field(callee, "object") : null;
+    const root = spawnRootIdentifierNode(receiver);
+    const rootName = root ? text(root) : null;
+
+    // A recognized module alias remains a spawning capability.
+    if (object && root && spawnResolvesBinding(
+        root, rootName, "modules", spawnBindings
+    )) {
+        return true;
+    }
+
+    // A known function alias must resolve to the trusted binding in scope.
+    if (!object && spawnResolvesBinding(
+        callee, property, "functions", spawnBindings
+    )) {
+        return true;
+    }
 
     if (!SPAWN_FUNCTIONS.has(property)) return false;
 
     if (object) {
-        // require("child_process").exec(...), childProcess.spawn(...)
+        // Preserve the existing inline require("child_process") case.
         if (/child_process/.test(raw)) return true;
-        return !SPAWN_ONLY_WHEN_BOUND.has(property) && /^(child_?process|cp)$/i.test(host);
+
+        // A locally declared receiver shadows the conventional module name.
+        if (root && spawnNearestBindingScope(root, rootName)) return false;
+
+        return !SPAWN_ONLY_WHEN_BOUND.has(property) &&
+            /^(child_?process|cp)$/i.test(host);
     }
 
     return !SPAWN_ONLY_WHEN_BOUND.has(property);
 }
-
 function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings }) {
+    const callee = field(node, "function") || (node.namedChildren || [])[0];
     const { object, property, raw } = callTarget(node);
+    const sequence = callee?.type === "parenthesized_expression"
+        ? (callee.namedChildren || []).find(child => child.type === "sequence_expression")
+        : null;
+    const expressions = sequence?.namedChildren || [];
+    const indirectEvalName = expressions[expressions.length - 1];
+    const indirectGlobalEval =
+        indirectEvalName?.type === "identifier" &&
+        text(indirectEvalName) === "eval" &&
+        !isNameShadowed(indirectEvalName, "eval");
     const callArgs = args(node);
     const host = rootObjectOf(object);
 
@@ -699,7 +965,7 @@ function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings 
     }
 
     // Process spawning, whether destructured or called through child_process
-    if (isSpawnCall({ object, property, raw }, host, spawnBindings)) {
+    if (isSpawnCall({ object, property, raw, callee }, host, spawnBindings)) {
         facts.operations.processSpawn = true;
         calls.process.add(object ? `${object}.${property}` : String(property));
         signal("process_spawn", object ? `${object}.${property}` : String(property), node);
@@ -708,6 +974,7 @@ function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings 
 
     // Dynamic code execution. Do not flag arbitrary object methods named eval.
     if (
+        indirectGlobalEval ||
         (!object && property === "eval" &&
          !isNameShadowed(field(node, "function"), "eval")) ||
         (object === "globalThis" && property === "eval" &&
@@ -769,13 +1036,18 @@ function visitMember(node, { facts, env, signal }) {
     }
 }
 
-function visitSubscript(node, { env }) {
+function visitSubscript(node, { env, signal }) {
     // process.env["NAME"]
     const object = field(node, "object");
     const index = field(node, "index");
     if (object && text(object) === "process.env") {
         const name = stringLiteral(index);
-        if (name) env.add(name);
+        if (name) {
+            env.add(name);
+            if (SECRETISH.test(name)) {
+                signal("secret_access", `process.env.${name}`, node);
+            }
+        }
     }
 }
 
