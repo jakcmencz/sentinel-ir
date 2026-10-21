@@ -29,6 +29,43 @@
 const AstFacts = require("./ast-facts");
 const TreeParser = require("./tree-parser");
 
+const LANGUAGES = Object.freeze(["javascript", "typescript", "tsx"]);
+
+const LANGUAGE_ALIASES = Object.freeze({
+    javascript: "javascript",
+    js: "javascript",
+    typescript: "typescript",
+    ts: "typescript",
+    tsx: "tsx"
+});
+
+// File extensions that select a grammar when no `language` option is given.
+// Anything else (including no target) is analyzed as JavaScript, as before.
+const EXTENSION_LANGUAGES = Object.freeze({
+    ".js": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".jsx": "javascript",
+    ".ts": "typescript",
+    ".mts": "typescript",
+    ".cts": "typescript",
+    ".tsx": "tsx"
+});
+
+// Explicit `language` wins; otherwise the target's extension decides. An
+// unknown explicit language is kept as given so the IR can say what it could
+// not analyze instead of parsing it with the wrong grammar.
+function resolveLanguage(language, target) {
+    if (typeof language === "string" && language.trim() !== "") {
+        const id = language.trim().toLowerCase();
+        return { language: LANGUAGE_ALIASES[id] || id, supported: Object.hasOwn(LANGUAGE_ALIASES, id) };
+    }
+
+    const match = /\.[^./\\]+$/.exec(String(target || "").toLowerCase());
+    const inferred = match && EXTENSION_LANGUAGES[match[0]];
+    return { language: inferred || "javascript", supported: true };
+}
+
 const DEFAULTS = Object.freeze({
     pressure: 0.5,
     confidence: 0.75,
@@ -47,8 +84,10 @@ function numberOr(value, fallback, min, max) {
 
 function readOptions(options = {}) {
     const opts = options && typeof options === "object" ? options : {};
+    const target = typeof opts.target === "string" ? opts.target : null;
     return {
-        target: typeof opts.target === "string" ? opts.target : null,
+        target,
+        ...resolveLanguage(opts.language, target),
         pressure: numberOr(opts.pressure, DEFAULTS.pressure, 0, 1),
         confidence: numberOr(opts.confidence, DEFAULTS.confidence, 0, 1),
         budget: numberOr(opts.budget, DEFAULTS.budget, 0, Infinity),
@@ -215,10 +254,16 @@ function compressFacts(facts) {
 
 function analyze(content, options = {}) {
     const opts = readOptions(options);
-    const facts = AstFacts.extract(content);
+    const facts = opts.supported
+        ? AstFacts.extract(content, opts.language)
+        : {
+            ...AstFacts.emptyFacts(),
+            error: `unsupported language: ${opts.language} (supported: ${LANGUAGES.join(", ")})`
+        };
 
     return {
         target: opts.target,
+        language: opts.language,
         objective: inferObjective(content, opts.consecutiveFailures, facts),
         constraints: inferConstraints(opts.target, opts.consecutiveFailures),
         risk: inferRisk(opts.target, content, facts),
@@ -235,6 +280,7 @@ function analyze(content, options = {}) {
 function compress(ir) {
     return {
         analysisStatus: ir.facts?.ast === true ? 'complete' : 'incomplete',
+        language: ir.language || "javascript",
         mission: {
             target: ir.target,
             objective: ir.objective
@@ -263,12 +309,23 @@ function expandDecision(decision, sourceIr) {
     };
 }
 
-async function initializeWasm() {
-    await TreeParser.initWasm();
+// Loads the bundled WebAssembly grammars. Without arguments only JavaScript is
+// loaded; pass e.g. { languages: ["typescript", "tsx"] } before calling the
+// synchronous analyze() on TypeScript.
+async function initializeWasm(options = {}) {
+    const requested = Array.isArray(options?.languages) ? options.languages : ["javascript"];
+    for (const language of requested) {
+        const resolved = resolveLanguage(language, null);
+        if (!resolved.supported) {
+            throw new Error(`Unsupported language: ${language} (supported: ${LANGUAGES.join(", ")})`);
+        }
+        await TreeParser.initWasm(resolved.language);
+    }
 }
 
 async function analyzeAsync(content, options = {}) {
-    await initializeWasm();
+    const opts = readOptions(options);
+    if (opts.supported) await TreeParser.initWasm(opts.language);
     return analyze(content, options);
 }
 
@@ -279,5 +336,6 @@ module.exports = {
     compressFacts,
     expandDecision,
     DEFAULTS,
+    LANGUAGES,
     initializeWasm
 };

@@ -139,7 +139,7 @@ test('compress produces the documented top-level shape', () => {
     const ir = analyze(SERVER, { target: 'src/server.js', pressure: 0.2, confidence: 0.9, budget: 0.1 });
     const compressed = compress(ir);
 
-    assert.deepEqual(Object.keys(compressed), ['analysisStatus', 'mission', 'world', 'constraints', 'forbidden', 'summary', 'facts']);
+    assert.deepEqual(Object.keys(compressed), ['analysisStatus', 'language', 'mission', 'world', 'constraints', 'forbidden', 'summary', 'facts']);
     assert.deepEqual(compressed.mission, { target: 'src/server.js', objective: 'filesystem_simplification' });
     assert.deepEqual(compressed.world, { pressure: 0.2, confidence: 0.9, budget: 0.1, risk: ir.risk });
     assert.deepEqual(compressed.constraints, ir.constraints);

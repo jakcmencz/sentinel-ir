@@ -2,16 +2,24 @@
 
 Structural IR for AI reasoning over code.
 
-`sentinel-ir` turns a JavaScript source file into a small, structural JSON
+`sentinel-ir` turns a JavaScript or TypeScript source file into a small, structural JSON
 description — routes, exports, imports, environment reads, network /
 filesystem / process / crypto calls, dangerous syntax and a risk level — built
 from the [tree-sitter](https://tree-sitter.github.io/) AST. You send that IR to
 an LLM instead of the raw file.
 
-**Supported language: JavaScript only** (CommonJS and ESM, via
-`tree-sitter-javascript`). TypeScript, JSX-heavy code and other languages are
-not supported; source that does not parse falls back to text heuristics and
-the IR says so (`facts.ast: false`).
+**Supported languages:**
+
+| `language` | grammar | picked for `target` ending in |
+|---|---|---|
+| `javascript` (default) | `tree-sitter-javascript` | `.js` `.mjs` `.cjs` `.jsx`, or no / unknown extension |
+| `typescript` | `tree-sitter-typescript` 0.23.2 | `.ts` `.mts` `.cts` (incl. `.d.ts`) |
+| `tsx` | `tree-sitter-tsx` 0.23.2 | `.tsx` |
+
+Other languages are not supported. An explicit unsupported `language`
+(e.g. `"python"`) is reported as `analysisStatus: "incomplete"` instead of
+being parsed with the wrong grammar. Source that does not parse falls back to
+text heuristics and the IR says so (`facts.ast: false`).
 
 ## Why send IR instead of the raw file
 
@@ -86,6 +94,7 @@ Output:
 ```json
 {
   "analysisStatus": "complete",
+  "language": "javascript",
   "mission": { "target": "src/server.js", "objective": "filesystem_simplification" },
   "world": { "pressure": 0.5, "confidence": 0.75, "budget": 0.015, "risk": "medium" },
   "constraints": ["preserve_api", "avoid_breaking_changes"],
@@ -120,6 +129,30 @@ initializeWasm().catch((error) => {
 });
 ```
 
+Only the JavaScript grammar is loaded by default. The TypeScript and TSX
+grammars (about 1.4 MB each, uncompressed) are loaded on first use by
+`analyzeAsync()`, or up front with
+`initializeWasm({ languages: ["typescript", "tsx"] })`.
+
+## TypeScript
+
+TypeScript and TSX produce the same IR shape and the same fact categories as
+JavaScript. TypeScript-specific handling:
+
+- `import type { X } from "m"`, `import { type X } from "m"` and
+  `typeof import("m")` in type positions are erased at compile time and are not
+  counted as runtime imports.
+- `import cp = require("child_process")` is a runtime require.
+- `x as T`, `x satisfies T`, `x!` and `<T>x` do not hide a call:
+  `(cp as any).exec(...)` is still process spawning.
+- Types, interfaces, type parameters and `declare` blocks are skipped; they
+  never run. Exported types, interfaces and enums are listed in `exports`.
+- `.ts` and `.tsx` are different grammars: JSX in a `.ts` file, or `<T>x` in a
+  `.tsx` file, is a parse error and gives `analysisStatus: "incomplete"`.
+
+Not covered: framework decorators (`@Get("/x")`) are not read as routes, and
+path aliases from `tsconfig.json` are not resolved.
+
 ## API
 
 ### `analyze(content, options?)` → `ir`
@@ -138,7 +171,8 @@ your own signals, passed through into `world` and used for `objective` /
 
 | option | type | default | effect |
 |---|---|---|---|
-| `target` | string | `null` | file path; shown in `mission.target`; a path containing `crypto` raises low risk to medium and adds `preserve_security` |
+| `target` | string | `null` | file path; shown in `mission.target`; its extension selects the language when `language` is not given; a path containing `crypto` raises low risk to medium and adds `preserve_security` |
+| `language` | string | from `target`, else `"javascript"` | `javascript` / `js`, `typescript` / `ts`, `tsx`; overrides the extension |
 | `pressure` | number in [0, 1] | `0.5` | copied to `world.pressure` |
 | `confidence` | number in [0, 1] | `0.75` | copied to `world.confidence` |
 | `budget` | number ≥ 0 | `0.015` | copied to `world.budget` |
@@ -150,17 +184,24 @@ is a valid value. The defaults are exported as `DEFAULTS`.
 
 ### `analyzeAsync(content, options?)` → `Promise<ir>`
 
-Initializes the bundled WebAssembly parser and then analyzes the JavaScript
-source. Use it on platforms where the optional native parser is unavailable.
+Initializes the bundled WebAssembly parser for the selected language and then
+analyzes the source. Use it on platforms where the optional native parser is unavailable.
 Parser initialization failures reject the promise; source-analysis failures
 are represented by `analysisStatus: "incomplete"`.
 
-### `initializeWasm()` → `Promise<void>`
+### `initializeWasm({ languages }?)` → `Promise<void>`
 
-Initializes the bundled WebAssembly parser without analyzing source.
-Use `analyzeAsync()` for the usual one-step workflow.
+Initializes the bundled WebAssembly parsers without analyzing source
+(default: `["javascript"]`). Needed before the synchronous `analyze()` on
+TypeScript; without it `analyze()` returns `analysisStatus: "incomplete"` for
+TypeScript. Use `analyzeAsync()` for the usual one-step workflow. Rejects for
+an unsupported language.
 
-### `compress(ir)` → `{ analysisStatus, mission, world, constraints, forbidden, summary, facts }`
+### `LANGUAGES`
+
+`["javascript", "typescript", "tsx"]`.
+
+### `compress(ir)` → `{ analysisStatus, language, mission, world, constraints, forbidden, summary, facts }`
 
 The compact projection meant for the prompt. `facts` is `compressFacts(ir.facts)`.
 
@@ -188,7 +229,7 @@ Joins an LLM decision with the IR it was made on:
 
 ## Limitations
 
-- JavaScript only; one file at a time — capabilities split across files are not
+- JavaScript and TypeScript only; one file at a time — capabilities split across files are not
   combined.
 - Facts are syntactic. Aliases the AST cannot resolve (values passed through
   other modules, computed property names) are not followed.
@@ -233,5 +274,6 @@ The `risk` field remains a risk estimate, not a guarantee of safety. When
 treated as evidence that the source is safe. Consumers making automated
 decisions should abstain or require additional analysis in this state.
 
-`analysisStatus` is an additive field in the public output. Consumers that
-validate exact object keys may need to account for it.
+`analysisStatus` (0.1.3) and `language` (0.2.0) are additive fields in the
+public output. Consumers that validate exact object keys may need to account
+for them.

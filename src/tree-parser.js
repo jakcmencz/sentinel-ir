@@ -5,6 +5,13 @@ const path = require("path");
 const DIRECT_INPUT_LIMIT = 32 * 1024;
 const CHUNK_SIZE = 8 * 1024;
 
+// Bundled WebAssembly grammars, one per supported language id.
+const WASM_GRAMMARS = Object.freeze({
+    javascript: "tree-sitter-javascript.wasm",
+    typescript: "tree-sitter-typescript.wasm",
+    tsx: "tree-sitter-tsx.wasm"
+});
+
 const TreeParser = {
     parser: null,
     backend: null,
@@ -23,12 +30,17 @@ const TreeParser = {
 
     // Android/WASM: sdílí jednu rozpracovanou inicializaci.
     wasmInitPromise: null,
+    wasmRuntimePromise: null,
 
-    async initWasm() {
-        if (this.parser && this.backend === "wasm") return;
-        if (this.wasmInitPromise) return this.wasmInitPromise;
+    // Grammars other than JavaScript exist only as bundled WebAssembly and are
+    // loaded on first use, so a JavaScript-only caller never loads them.
+    languageParsers: {},
+    languagePromises: {},
 
-        this.wasmInitPromise = (async () => {
+    loadWasmRuntime() {
+        if (this.wasmRuntimePromise) return this.wasmRuntimePromise;
+
+        this.wasmRuntimePromise = (async () => {
             const mod = require("web-tree-sitter");
             const Parser = mod.Parser || mod.default || mod;
             const Language = mod.Language || Parser.Language;
@@ -39,38 +51,92 @@ const TreeParser = {
             }
 
             await Parser.init();
-
-            const wasmPath = path.join(
-                __dirname, "..", "wasm", "tree-sitter-javascript.wasm"
-            );
-
-            const language = await Language.load(wasmPath);
-            const parser = new Parser();
-            parser.setLanguage(language);
-
-            this.parser = parser;
-            this.backend = "wasm";
+            return { Parser, Language };
         })().catch(error => {
-            this.wasmInitPromise = null;
+            this.wasmRuntimePromise = null;
             throw error;
         });
+
+        return this.wasmRuntimePromise;
+    },
+
+    async loadWasmParser(language) {
+        const { Parser, Language } = await this.loadWasmRuntime();
+        const wasmPath = path.join(__dirname, "..", "wasm", WASM_GRAMMARS[language]);
+        const grammar = await Language.load(wasmPath);
+        const parser = new Parser();
+        parser.setLanguage(grammar);
+        return parser;
+    },
+
+    async initWasm(language = "javascript") {
+        if (!Object.hasOwn(WASM_GRAMMARS, language)) {
+            throw new Error(`Unsupported language: ${language}`);
+        }
+
+        if (language !== "javascript") {
+            if (this.languageParsers[language]) return;
+            if (this.languagePromises[language]) return this.languagePromises[language];
+
+            this.languagePromises[language] = this.loadWasmParser(language)
+                .then(parser => {
+                    this.languageParsers[language] = parser;
+                })
+                .catch(error => {
+                    delete this.languagePromises[language];
+                    throw error;
+                });
+
+            return this.languagePromises[language];
+        }
+
+        if (this.parser && this.backend === "wasm") return;
+        if (this.wasmInitPromise) return this.wasmInitPromise;
+
+        this.wasmInitPromise = this.loadWasmParser("javascript")
+            .then(parser => {
+                this.parser = parser;
+                this.backend = "wasm";
+            })
+            .catch(error => {
+                this.wasmInitPromise = null;
+                throw error;
+            });
 
         return this.wasmInitPromise;
     },
 
-    parseInput(content) {
+    parseInput(content, parser = this.parser) {
         if (content.length <= DIRECT_INPUT_LIMIT) {
-            return this.parser.parse(content);
+            return parser.parse(content);
         }
 
-        return this.parser.parse(index =>
+        return parser.parse(index =>
             index < content.length
                 ? content.slice(index, index + CHUNK_SIZE)
                 : null
         );
     },
 
-    parse(content) {
+    parserFor(language) {
+        if (language === "javascript") {
+            if (!this.parser) {
+                this.init();
+            }
+            return this.parser;
+        }
+
+        const parser = this.languageParsers[language];
+        if (!parser) {
+            throw new Error(
+                `The ${language} parser is not initialized. ` +
+                "Use analyzeAsync() or initializeWasm({ languages }) first."
+            );
+        }
+        return parser;
+    },
+
+    parse(content, language = "javascript") {
         try {
             if (typeof content !== "string") {
                 throw new Error(
@@ -78,11 +144,12 @@ const TreeParser = {
                 );
             }
 
-            if (!this.parser) {
-                this.init();
+            if (!Object.hasOwn(WASM_GRAMMARS, language)) {
+                throw new Error(`Unsupported language: ${language}`);
             }
 
-            const tree = this.parseInput(content);
+            const parser = this.parserFor(language);
+            const tree = this.parseInput(content, parser);
             const root = tree.rootNode;
             const hasError = typeof root.hasError === "function"
                 ? root.hasError()
@@ -90,7 +157,7 @@ const TreeParser = {
 
             return {
                 ok: true,
-                language: "javascript",
+                language,
                 root,
                 nodes: this.extractNodes(root),
                 metrics: {
@@ -101,7 +168,7 @@ const TreeParser = {
         } catch (error) {
             return {
                 ok: false,
-                language: "javascript",
+                language,
                 root: null,
                 nodes: [],
                 metrics: {
@@ -156,5 +223,7 @@ const TreeParser = {
         };
     }
 };
+
+TreeParser.WASM_GRAMMARS = WASM_GRAMMARS;
 
 module.exports = TreeParser;
