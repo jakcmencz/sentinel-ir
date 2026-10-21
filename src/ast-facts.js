@@ -107,10 +107,112 @@ function stringLiteral(node) {
     return null;
 }
 
+// ---------------------------------------------------------------------------
+// TypeScript
+//
+// The TypeScript grammars reuse the JavaScript node types and add type-only
+// syntax. None of the node types below exist in the JavaScript grammar, so the
+// helpers are no-ops for JavaScript input.
+// ---------------------------------------------------------------------------
+
+// `x as T`, `x satisfies T`, `x!`, `<T>x`: the runtime value is the inner expression.
+const TS_WRAPPERS = new Set([
+    "as_expression", "satisfies_expression", "non_null_expression", "type_assertion"
+]);
+
+// Subtrees that only describe types and never run.
+const TYPE_ONLY_NODES = new Set([
+    "type_annotation", "type_alias_declaration", "interface_declaration",
+    "type_arguments", "type_parameters", "implements_clause", "ambient_declaration"
+]);
+
+function tsInner(node) {
+    const children = node.namedChildren || [];
+    return node.type === "type_assertion" ? children[children.length - 1] : children[0];
+}
+
+// Strips TypeScript wrappers, and parentheses that only hold one, from an
+// expression: `(cp as any)` -> `cp`, `cp!` -> `cp`.
+function unwrapTypeOnly(node) {
+    let current = node;
+    while (current) {
+        if (TS_WRAPPERS.has(current.type)) {
+            current = tsInner(current);
+            continue;
+        }
+        if (current.type === "parenthesized_expression") {
+            const children = current.namedChildren || [];
+            if (children.length === 1 && TS_WRAPPERS.has(children[0].type)) {
+                current = children[0];
+                continue;
+            }
+        }
+        return current;
+    }
+    return current;
+}
+
+function hasTypeWrapper(node) {
+    let current = node;
+    while (current) {
+        if (unwrapTypeOnly(current) !== current) return true;
+        if (current.type !== "member_expression" && current.type !== "subscript_expression") {
+            return false;
+        }
+        current = field(current, "object");
+    }
+    return false;
+}
+
+// Source text of an expression without TypeScript wrappers in its object
+// chain, so `(fs as any).promises` reads as `fs.promises`. Plain JavaScript is
+// returned unchanged.
+function exprText(node) {
+    if (!hasTypeWrapper(node)) return text(node);
+    const inner = unwrapTypeOnly(node);
+    if (inner !== node) return exprText(inner);
+    if (node.type === "member_expression") {
+        return `${exprText(field(node, "object"))}.${text(field(node, "property"))}`;
+    }
+    const index = field(node, "index");
+    return `${exprText(field(node, "object"))}[${text(index)}]`;
+}
+
+// `import type { X } from "m"`: erased at compile time, no runtime import.
+function isTypeOnlyImport(node) {
+    return (node.children || []).some(child => child.type === "type" && !child.isNamed);
+}
+
+// `import { type X } from "m"`: this one binding is erased.
+function isTypeOnlySpecifier(node) {
+    return (node.children || []).some(child => child.type === "type" && !child.isNamed);
+}
+
+// `import cp = require("child_process")`: a runtime require in TypeScript.
+function importRequireClauseOf(node) {
+    return (node.namedChildren || []).find(child => child.type === "import_require_clause") || null;
+}
+
+// Like walk(), but skips type-only syntax so `typeof import("fs")` in a type
+// position is not read as a runtime import.
+function walkRuntime(node, visit) {
+    if (!node) return;
+    visit(node);
+    let children = node.namedChildren || node.children || [];
+    if (node.type === "as_expression" || node.type === "satisfies_expression") {
+        children = children.slice(0, 1);
+    } else if (node.type === "type_assertion") {
+        children = children.slice(-1);
+    }
+    for (const child of children) {
+        if (!TYPE_ONLY_NODES.has(child.type)) walkRuntime(child, visit);
+    }
+}
+
 // A call target split into `object.property`, e.g. fs.writeFileSync or
 // crypto.createHmac. `object` is null for a bare identifier call like eval(x).
 function callTarget(callNode) {
-    const callee = field(callNode, "function") || (callNode.namedChildren || [])[0];
+    const callee = unwrapTypeOnly(field(callNode, "function") || (callNode.namedChildren || [])[0]);
     if (!callee) return { object: null, property: null, raw: "" };
 
     // `import("child_process")` is its own node type, not an identifier.
@@ -124,9 +226,9 @@ function callTarget(callNode) {
         // Normalise chains (crypto.createHmac(...).update(...)) to their tail
         // object text so `fs.promises.writeFile` still reads as filesystem.
         return {
-            object: object ? text(object).split("\n")[0] : null,
+            object: object ? exprText(object).split("\n")[0] : null,
             property: property ? text(property) : null,
-            raw: text(callee).split("\n")[0]
+            raw: exprText(callee).split("\n")[0]
         };
     }
 
@@ -134,9 +236,9 @@ function callTarget(callNode) {
         const object = field(callee, "object");
         const index = field(callee, "index");
         return {
-            object: object ? text(object).split("\n")[0] : null,
+            object: object ? exprText(object).split("\n")[0] : null,
             property: stringLiteral(index),
-            raw: text(callee).split("\n")[0]
+            raw: exprText(callee).split("\n")[0]
         };
     }
 
@@ -171,6 +273,12 @@ function bindingPatternHasName(node, name) {
     if (node.type === "identifier" ||
         node.type === "shorthand_property_identifier_pattern") {
         return text(node) === name;
+    }
+
+    // TypeScript parameter: only its pattern declares a binding, not its type
+    // or default value.
+    if (node.type === "required_parameter" || node.type === "optional_parameter") {
+        return bindingPatternHasName(field(node, "pattern"), name);
     }
 
     // Default parameter: only its left side declares a binding.
@@ -217,6 +325,12 @@ function lexicalDeclarationHasName(node, name) {
 
 
 function importStatementHasBinding(statement, name) {
+    const requireClause = importRequireClauseOf(statement);
+    if (requireClause) {
+        const local = (requireClause.namedChildren || []).find(child => child.type === "identifier");
+        return Boolean(local && text(local) === name);
+    }
+
     const clause = (statement.namedChildren || []).find(
         child => child.type === "import_clause"
     );
@@ -282,7 +396,9 @@ function lexicalScopeHasBinding(scope, name) {
                 continue;
             }
 
-            if (child.type === "class_declaration") {
+            if (child.type === "class_declaration" ||
+                child.type === "abstract_class_declaration" ||
+                child.type === "enum_declaration") {
                 if (declarationNameIs(child, name)) return true;
                 continue;
             }
@@ -386,14 +502,15 @@ function isNameShadowed(reference, name) {
 }
 
 
-function isUnshadowedGlobalThis(callee) {
+function isUnshadowedGlobalThis(node) {
+    const callee = unwrapTypeOnly(node);
     if (!callee ||
         (callee.type !== "member_expression" &&
          callee.type !== "subscript_expression")) {
         return false;
     }
 
-    const receiver = field(callee, "object");
+    const receiver = unwrapTypeOnly(field(callee, "object"));
 
     return receiver?.type === "identifier" &&
         text(receiver) === "globalThis" &&
@@ -439,9 +556,9 @@ function hasParseError(ast) {
     return Boolean(root.hasError);
 }
 
-function extract(content) {
+function extract(content, language = "javascript") {
     const facts = emptyFacts();
-    const ast = TreeParser.parse(String(content || ""));
+    const ast = TreeParser.parse(String(content || ""), language);
 
     // A partial parse would report proven absences that are really parser gaps,
     // so anything with an ERROR node is handed back to the text fallback.
@@ -464,7 +581,7 @@ function extract(content) {
         signals.push({ signal: name, evidence, line: line(node) });
     };
 
-    walk(ast.root, node => {
+    walkRuntime(ast.root, node => {
         switch (node.type) {
             case "call_expression":
                 visitCall(node, { facts, routes, imports, calls, signal, spawnBindings });
@@ -513,11 +630,13 @@ function extract(content) {
                 visitExport(node, { exportsFound });
                 break;
             case "import_statement": {
-                const source = stringLiteral(field(node, "source"));
+                if (isTypeOnlyImport(node)) break;
+                const requireClause = importRequireClauseOf(node);
+                const source = stringLiteral(field(requireClause || node, "source"));
                 if (source) {
                     imports.add(source);
                     if (CHILD_PROCESS_MODULES.has(source)) {
-                        const evidence = "import(child_process)";
+                        const evidence = requireClause ? "require(child_process)" : "import(child_process)";
                         facts.operations.childProcess = true;
                         calls.process.add(evidence);
                         signal("child_process_import", evidence, node);
@@ -556,11 +675,11 @@ function extract(content) {
 //   const { exec: sh } = require("child_process") -> functions: sh
 //   import { spawn } from "node:child_process"    -> functions: spawn
 function spawnRootIdentifierNode(node) {
-    let current = node;
+    let current = unwrapTypeOnly(node);
     while (current &&
         (current.type === "member_expression" ||
          current.type === "subscript_expression")) {
-        current = field(current, "object");
+        current = unwrapTypeOnly(field(current, "object"));
     }
     return current?.type === "identifier" ? current : null;
 }
@@ -701,11 +820,11 @@ function spawnBindingsOf(root) {
     // First pass: preserve existing require/import/destructuring support.
     walk(root, node => {
         if (node.type === "variable_declarator") {
-            let value = field(node, "value");
+            let value = unwrapTypeOnly(field(node, "value"));
 
             if (value?.type === "await_expression") {
-                value = field(value, "argument") ||
-                    (value.namedChildren || [])[0];
+                value = unwrapTypeOnly(field(value, "argument") ||
+                    (value.namedChildren || [])[0]);
             }
 
             if (value?.type === "call_expression") {
@@ -725,13 +844,26 @@ function spawnBindingsOf(root) {
         }
 
         if (node.type === "import_statement") {
-            const source = stringLiteral(field(node, "source"));
+            if (isTypeOnlyImport(node)) return;
+
+            const requireClause = importRequireClauseOf(node);
+            const source = stringLiteral(field(requireClause || node, "source"));
             if (!source || !SPAWN_MODULES.has(source)) return;
 
             const scope = importScopeOf(node);
 
+            if (requireClause) {
+                const local = (requireClause.namedChildren || []).find(child => child.type === "identifier");
+                if (local) {
+                    modules.add(text(local));
+                    addScoped(moduleScopes, scope, text(local));
+                }
+                return;
+            }
+
             walk(node, child => {
                 if (child.type === "import_specifier") {
+                    if (isTypeOnlySpecifier(child)) return;
                     const local = field(child, "alias") ||
                         field(child, "name");
 
@@ -776,11 +908,11 @@ function spawnBindingsOf(root) {
             const target = field(node, "name");
             if (target?.type !== "identifier") continue;
 
-            let value = field(node, "value");
+            let value = unwrapTypeOnly(field(node, "value"));
 
             if (value?.type === "await_expression") {
-                value = field(value, "argument") ||
-                    (value.namedChildren || [])[0];
+                value = unwrapTypeOnly(field(value, "argument") ||
+                    (value.namedChildren || [])[0]);
             }
 
             if (!value) continue;
@@ -885,7 +1017,7 @@ function isSpawnCall({ object, property, raw, callee }, host, spawnBindings) {
     return !SPAWN_ONLY_WHEN_BOUND.has(property);
 }
 function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings }) {
-    const callee = field(node, "function") || (node.namedChildren || [])[0];
+    const callee = unwrapTypeOnly(field(node, "function") || (node.namedChildren || [])[0]);
     const { object, property, raw } = callTarget(node);
     const sequence = callee?.type === "parenthesized_expression"
         ? (callee.namedChildren || []).find(child => child.type === "sequence_expression")
@@ -1087,7 +1219,18 @@ function visitExport(node, { exportsFound }) {
         exportsFound.add("default");
     }
 
-    const declaration = field(node, "declaration");
+    // TypeScript `export = name`, the counterpart of `module.exports = name`.
+    if (node.children?.some(child => child.type === "=" && !child.isNamed)) {
+        const value = (node.namedChildren || [])[0];
+        exportsFound.add(value?.type === "identifier" ? text(value) : "default");
+        return;
+    }
+
+    let declaration = field(node, "declaration");
+    // `export declare const x: T`
+    if (declaration?.type === "ambient_declaration") {
+        declaration = (declaration.namedChildren || [])[0] || null;
+    }
     if (declaration) {
         const name = field(declaration, "name");
         if (name) {

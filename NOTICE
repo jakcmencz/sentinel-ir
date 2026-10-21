@@ -3,3 +3,11 @@ Copyright 2026 Jakub Rojicek
 
 This product includes software developed as part of the Sentinel
 (AutoDoc-Sentinel) project.
+
+Third-party components:
+
+wasm/tree-sitter-typescript.wasm and wasm/tree-sitter-tsx.wasm are copied
+unmodified from the npm package tree-sitter-typescript@0.23.2
+(https://github.com/tree-sitter/tree-sitter-typescript),
+Copyright (c) 2017 Max Brunsfeld, MIT License; see
+wasm/LICENSE-tree-sitter-typescript.
