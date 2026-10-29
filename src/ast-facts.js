@@ -517,6 +517,882 @@ function isUnshadowedGlobalThis(node) {
         !isNameShadowed(receiver, "globalThis");
 }
 
+
+
+
+// Experimental V3: scope-aware alias tracking with control-flow joins.
+// This remains a conservative approximation, not a complete JS interpreter.
+
+const EVAL_ALIAS_LOOP_TYPES = new Set([
+    "while_statement",
+    "do_statement",
+    "for_statement",
+    "for_in_statement",
+    "for_of_statement"
+]);
+
+
+function evalAliasSameNode(a, b) {
+    return Boolean(
+        a &&
+        b &&
+        a.type === b.type &&
+        a.startIndex === b.startIndex &&
+        a.endIndex === b.endIndex
+    );
+}
+
+function evalAliasNodeIndex(nodes, target) {
+    return (nodes || []).findIndex(
+        candidate => evalAliasSameNode(candidate, target)
+    );
+}
+
+
+function evalAliasIfParts(node) {
+    const children = node.namedChildren || [];
+    const alternative = field(node, "alternative") ||
+        children.find(child => child.type === "else_clause") || null;
+    const condition = field(node, "condition") ||
+        children.find(child => child.type === "parenthesized_expression") ||
+        null;
+    const consequence = field(node, "consequence") ||
+        children.find(child =>
+            !evalAliasSameNode(child, alternative) &&
+            !evalAliasSameNode(child, condition)
+        ) || null;
+
+    return { condition, consequence, alternative };
+}
+function evalAliasLoopBody(node) {
+    const named = node.namedChildren || [];
+    const body = field(node, "body");
+
+    if (body) return body;
+    if (node.type === "do_statement") return named[0] || null;
+
+    return named[named.length - 1] || null;
+}
+
+
+function evalAliasLoopCondition(node) {
+    const condition = field(node, "condition");
+    if (condition) return condition;
+
+    const body = evalAliasLoopBody(node);
+    const children = node.namedChildren || [];
+
+    return children.find(
+        child => !evalAliasSameNode(child, body)
+    ) || null;
+}
+function evalAliasTryParts(node) {
+    const children = node.namedChildren || [];
+
+    return {
+        body: children.find(child => child.type === "statement_block") || null,
+        catcher: children.find(child => child.type === "catch_clause") || null,
+        finalizer: children.find(child => child.type === "finally_clause") || null
+    };
+}
+
+function evalAliasFunctionPath(node) {
+    const path = [];
+    let current = node;
+
+    while (current) {
+        if (FUNCTION_SCOPE_TYPES.has(current.type)) {
+            path.push(spawnScopeKey(current));
+        }
+        current = current.parent;
+    }
+
+    return path.reverse();
+}
+
+function evalAliasSameFunctionContext(a, b) {
+    const left = evalAliasFunctionPath(a);
+    const right = evalAliasFunctionPath(b);
+
+    return left.length === right.length &&
+        left.every((entry, index) => entry === right[index]);
+}
+
+function evalAliasExecutionPath(node) {
+    const path = [];
+    let child = node;
+    let current = node;
+
+    while (current) {
+        if (FUNCTION_SCOPE_TYPES.has(current.type)) {
+            path.push(`fn:${spawnScopeKey(current)}`);
+        }
+
+        const parent = current.parent;
+        if (!parent) break;
+
+        if (parent.type === "if_statement") {
+            const parts = evalAliasIfParts(parent);
+
+            if (
+                parts.alternative &&
+                child.startIndex >= parts.alternative.startIndex &&
+                child.endIndex <= parts.alternative.endIndex
+            ) {
+                path.push(`if:${spawnScopeKey(parent)}:else`);
+            } else if (
+                parts.consequence &&
+                child.startIndex >= parts.consequence.startIndex &&
+                child.endIndex <= parts.consequence.endIndex
+            ) {
+                path.push(`if:${spawnScopeKey(parent)}:then`);
+            }
+        } else if (
+            parent.type === "switch_body" &&
+            (child.type === "switch_case" ||
+             child.type === "switch_default")
+        ) {
+            path.push(
+                `switch:${spawnScopeKey(parent)}:case:${child.startIndex}`
+            );
+        } else if (parent.type === "try_statement") {
+            const branch =
+                child.type === "catch_clause" ? "catch" :
+                child.type === "finally_clause" ? "finally" : "try";
+
+            path.push(`try:${spawnScopeKey(parent)}:${branch}`);
+        } else if (EVAL_ALIAS_LOOP_TYPES.has(parent.type)) {
+            const body = evalAliasLoopBody(parent);
+
+            if (
+                body &&
+                child.startIndex >= body.startIndex &&
+                child.endIndex <= body.endIndex
+            ) {
+                path.push(`loop:${spawnScopeKey(parent)}`);
+            }
+        }
+
+        child = parent;
+        current = parent;
+    }
+
+    return path.reverse();
+}
+
+function evalAliasPathIsVisible(eventPath, referencePath) {
+    if (eventPath.length > referencePath.length) return false;
+
+    return eventPath.every(
+        (entry, index) => entry === referencePath[index]
+    );
+}
+
+function evalAliasEnclosingSwitchCase(node) {
+    let current = node;
+
+    while (current) {
+        if (
+            current.type === "switch_case" ||
+            current.type === "switch_default"
+        ) {
+            return current;
+        }
+
+        if (current.type === "switch_statement") return null;
+        current = current.parent;
+    }
+
+    return null;
+}
+
+
+function evalAliasTopLevelChild(node, ancestor) {
+    let current = node;
+
+    while (
+        current &&
+        current.parent &&
+        !evalAliasSameNode(current.parent, ancestor)
+    ) {
+        current = current.parent;
+    }
+
+    return current && evalAliasSameNode(current.parent, ancestor)
+        ? current
+        : null;
+}
+function evalAliasSwitchExitStatement(node) {
+    return node && [
+        "break_statement",
+        "continue_statement",
+        "return_statement",
+        "throw_statement"
+    ].includes(node.type);
+}
+
+
+function evalAliasSwitchFallthroughVisible(eventNode, reference) {
+    if (
+        !eventNode ||
+        !reference ||
+        !evalAliasSameFunctionContext(eventNode, reference)
+    ) {
+        return false;
+    }
+
+    const sourceCase = evalAliasEnclosingSwitchCase(eventNode);
+    const targetCase = evalAliasEnclosingSwitchCase(reference);
+
+    if (
+        !sourceCase ||
+        !targetCase ||
+        evalAliasSameNode(sourceCase, targetCase)
+    ) {
+        return false;
+    }
+
+    const body = sourceCase.parent;
+
+    if (
+        !body ||
+        !evalAliasSameNode(body, targetCase.parent) ||
+        body.type !== "switch_body"
+    ) {
+        return false;
+    }
+
+    const cases = (body.namedChildren || []).filter(
+        child =>
+            child.type === "switch_case" ||
+            child.type === "switch_default"
+    );
+
+    const sourceIndex = evalAliasNodeIndex(cases, sourceCase);
+    const targetIndex = evalAliasNodeIndex(cases, targetCase);
+
+    if (sourceIndex < 0 || targetIndex <= sourceIndex) return false;
+
+    const sourceChildren = sourceCase.namedChildren || [];
+    const sourceChild = evalAliasTopLevelChild(eventNode, sourceCase);
+    const eventIndex = evalAliasNodeIndex(sourceChildren, sourceChild);
+
+    if (eventIndex < 0) return false;
+
+    for (let i = 0; i < eventIndex; i++) {
+        if (evalAliasSwitchExitStatement(sourceChildren[i])) return false;
+    }
+
+    for (let i = eventIndex + 1; i < sourceChildren.length; i++) {
+        if (evalAliasSwitchExitStatement(sourceChildren[i])) return false;
+    }
+
+    for (let i = sourceIndex + 1; i < targetIndex; i++) {
+        if (
+            (cases[i].namedChildren || []).some(
+                evalAliasSwitchExitStatement
+            )
+        ) {
+            return false;
+        }
+    }
+
+    return true;
+}
+function evalAliasEnclosingTryStatement(node) {
+    let current = node;
+
+    while (current) {
+        if (current.type === "try_statement") return current;
+        current = current.parent;
+    }
+
+    return null;
+}
+
+
+function evalAliasTryCatchCanFlow(eventNode, reference) {
+    if (
+        !eventNode ||
+        !reference ||
+        !evalAliasSameFunctionContext(eventNode, reference)
+    ) {
+        return false;
+    }
+
+    const sourceTry = evalAliasEnclosingTryStatement(eventNode);
+    const targetTry = evalAliasEnclosingTryStatement(reference);
+
+    if (
+        !sourceTry ||
+        !targetTry ||
+        !evalAliasSameNode(sourceTry, targetTry)
+    ) {
+        return false;
+    }
+
+    const parts = evalAliasTryParts(sourceTry);
+
+    if (!parts.body || !parts.catcher) return false;
+
+    if (
+        eventNode.startIndex < parts.body.startIndex ||
+        eventNode.endIndex > parts.body.endIndex ||
+        reference.startIndex < parts.catcher.startIndex ||
+        reference.endIndex > parts.catcher.endIndex
+    ) {
+        return false;
+    }
+
+    const statements = parts.body.namedChildren || [];
+    const sourceStatement = evalAliasTopLevelChild(
+        eventNode,
+        parts.body
+    );
+    const sourceIndex = evalAliasNodeIndex(statements, sourceStatement);
+
+    if (sourceIndex < 0) return false;
+
+    for (let i = 0; i < sourceIndex; i++) {
+        if (evalAliasSwitchExitStatement(statements[i])) return false;
+    }
+
+    for (let i = sourceIndex + 1; i < statements.length; i++) {
+        const statement = statements[i];
+
+        if (statement.type === "throw_statement") return true;
+
+        if (
+            statement.type === "return_statement" ||
+            statement.type === "break_statement" ||
+            statement.type === "continue_statement"
+        ) {
+            return false;
+        }
+    }
+
+    return false;
+}
+function evalAliasEventVisible(event, reference, referencePath) {
+    if (evalAliasPathIsVisible(event.contextPath, referencePath)) {
+        return true;
+    }
+
+    if (!event.node) return false;
+
+    if (evalAliasSwitchFallthroughVisible(event.node, reference)) {
+        return true;
+    }
+
+    if (!evalAliasTryCatchCanFlow(event.node, reference)) {
+        return false;
+    }
+
+    const tryNode = evalAliasEnclosingTryStatement(event.node);
+    const tryKey = spawnScopeKey(tryNode);
+
+    const eventPath = event.contextPath.filter(
+        entry => entry !== `try:${tryKey}:try`
+    );
+
+    const catchPath = referencePath.filter(
+        entry => entry !== `try:${tryKey}:catch`
+    );
+
+    return evalAliasPathIsVisible(eventPath, catchPath);
+}
+
+
+function evalAliasScopeKey(reference, name) {
+    const scope = spawnNearestBindingScope(reference, name);
+    return scope ? `${spawnScopeKey(scope)}:${name}` : "";
+}
+
+function evalAliasStateAtOffset(aliases, key, offset, reference) {
+    if (!key || !reference) return false;
+
+    const events = aliases.get(key) || [];
+    const referencePath = evalAliasExecutionPath(reference);
+    let state = false;
+
+    for (const event of events) {
+        if (event.offset >= offset) break;
+
+        if (evalAliasEventVisible(event, reference, referencePath)) {
+            state = event.isAlias;
+        }
+    }
+
+    return state;
+}
+
+function evalAliasStateAt(aliases, key, reference) {
+    return reference
+        ? evalAliasStateAtOffset(
+            aliases, key, reference.startIndex, reference
+        )
+        : false;
+}
+
+function evalAliasValue(node, aliases) {
+    let current = unwrapTypeOnly(node);
+
+    while (current && current.type === "parenthesized_expression") {
+        current = unwrapTypeOnly((current.namedChildren || [])[0]);
+    }
+
+    if (!current) return false;
+
+    if (current.type === "identifier") {
+        const name = text(current);
+
+        if (name === "eval") {
+            return !isNameShadowed(current, "eval");
+        }
+
+        const key = evalAliasScopeKey(current, name);
+        return evalAliasStateAt(aliases, key, current);
+    }
+
+    if (current.type === "member_expression") {
+        return text(field(current, "property")) === "eval" &&
+            isUnshadowedGlobalThis(current);
+    }
+
+    return false;
+}
+
+function evalAliasFunctionBinding(node) {
+    let nameNode = null;
+    let scope = null;
+
+    if (
+        node.type === "function_declaration" ||
+        node.type === "generator_function_declaration"
+    ) {
+        nameNode = field(node, "name");
+
+        if (!nameNode || nameNode.type !== "identifier") return null;
+
+        scope = spawnNearestBindingScope(node.parent, text(nameNode));
+    } else {
+        const parent = node.parent;
+
+        if (
+            parent?.type === "variable_declarator" &&
+            field(parent, "value")?.startIndex === node.startIndex
+        ) {
+            nameNode = field(parent, "name");
+        } else if (
+            parent?.type === "assignment_expression" &&
+            field(parent, "right")?.startIndex === node.startIndex
+        ) {
+            nameNode = unwrapTypeOnly(field(parent, "left"));
+        } else {
+            return null;
+        }
+
+        if (!nameNode || nameNode.type !== "identifier") return null;
+
+        scope = spawnNearestBindingScope(nameNode, text(nameNode));
+    }
+
+    if (!scope || !nameNode) return null;
+
+    return {
+        bindingKey: `${spawnScopeKey(scope)}:${text(nameNode)}`,
+        functionKey: spawnScopeKey(node)
+    };
+}
+
+function evalAliasEnclosingFunction(node) {
+    let current = node;
+
+    while (current) {
+        if (FUNCTION_SCOPE_TYPES.has(current.type)) return current;
+        current = current.parent;
+    }
+
+    return null;
+}
+
+function evalAliasScopeIsInsideFunction(scope, fn) {
+    if (!scope || !fn) return false;
+
+    return scope.startIndex >= fn.startIndex &&
+        scope.endIndex <= fn.endIndex;
+}
+
+function isEvalAliasReference(reference, context, callNode) {
+    if (!reference || reference.type !== "identifier") return false;
+
+    const name = text(reference);
+    const key = evalAliasScopeKey(reference, name);
+    const bindingScope = spawnNearestBindingScope(reference, name);
+    const enclosingFunction = evalAliasEnclosingFunction(callNode);
+
+    if (
+        bindingScope &&
+        enclosingFunction &&
+        !evalAliasScopeIsInsideFunction(bindingScope, enclosingFunction)
+    ) {
+        const functionKey = spawnScopeKey(enclosingFunction);
+        const sites = context.invocationSites.get(functionKey) || [];
+
+        if (sites.length) {
+            return sites.some(
+                site => evalAliasStateAt(context.aliases, key, site)
+            );
+        }
+
+        return (context.aliases.get(key) || []).some(
+            event => event.isAlias
+        );
+    }
+
+    return evalAliasStateAt(context.aliases, key, reference);
+}
+
+function evalAliasAppendEvent(aliases, key, event) {
+    let events = aliases.get(key);
+
+    if (!events) {
+        events = [];
+        aliases.set(key, events);
+    }
+
+    events.push(event);
+}
+
+function evalAliasControlKeys(task, writes) {
+    const node = task.node;
+
+    return [...new Set(
+        writes
+            .filter(write =>
+                write.node.startIndex >= node.startIndex &&
+                write.node.endIndex <= node.endIndex &&
+                evalAliasSameFunctionContext(write.node, node) &&
+                (
+                    task.kind !== "try-enter" ||
+                    write.offset < task.offset
+                )
+            )
+            .map(write => write.key)
+    )];
+}
+
+function evalAliasControlResult(task, key, aliases) {
+    const node = task.node;
+    const incoming = evalAliasStateAtOffset(
+        aliases, key, node.startIndex, node
+    );
+
+    if (task.kind === "if") {
+        const parts = evalAliasIfParts(node);
+
+        const conditionState = parts.condition
+            ? evalAliasStateAtOffset(
+                aliases,
+                key,
+                parts.condition.endIndex + 1,
+                parts.condition
+            )
+            : incoming;
+
+        const thenState = parts.consequence
+            ? evalAliasStateAtOffset(
+                aliases, key, parts.consequence.endIndex, parts.consequence
+            )
+            : conditionState;
+
+        const elseState = parts.alternative
+            ? evalAliasStateAtOffset(
+                aliases, key, parts.alternative.endIndex, parts.alternative
+            )
+            : conditionState;
+
+        return thenState || elseState;
+    }
+
+    if (task.kind === "loop") {
+        const body = evalAliasLoopBody(node);
+        const condition = evalAliasLoopCondition(node);
+
+        const conditionState = condition
+            ? evalAliasStateAtOffset(
+                aliases, key, condition.endIndex + 1, condition
+            )
+            : incoming;
+
+        const bodyState = body
+            ? evalAliasStateAtOffset(aliases, key, body.endIndex, body)
+            : incoming;
+
+        if (node.type === "do_statement") return bodyState;
+
+        // A while/for loop may execute zero times.
+        return conditionState || bodyState;
+    }
+
+    if (task.kind === "switch") {
+        const body = (node.namedChildren || []).find(
+            child => child.type === "switch_body"
+        );
+
+        if (!body) return incoming;
+
+        const children = node.namedChildren || [];
+        const discriminant = children.find(child => !evalAliasSameNode(child, body));
+        const baseline = discriminant
+            ? evalAliasStateAtOffset(
+                aliases, key, discriminant.endIndex + 1, discriminant
+            )
+            : incoming;
+
+        const branches = (body.namedChildren || []).filter(
+            child =>
+                child.type === "switch_case" ||
+                child.type === "switch_default"
+        );
+
+        if (!branches.length) return baseline;
+
+        const hasDefault = branches.some(
+            child => child.type === "switch_default"
+        );
+
+        const possibleStates = branches.map(
+            branch => evalAliasStateAtOffset(
+                aliases, key, branch.endIndex, branch
+            )
+        );
+
+        if (!hasDefault) possibleStates.push(baseline);
+
+        return possibleStates.some(Boolean);
+    }
+
+    if (
+        task.kind === "try-join" ||
+        task.kind === "try-enter"
+    ) {
+        const parts = evalAliasTryParts(node);
+        const tryState = parts.body
+            ? evalAliasStateAtOffset(
+                aliases, key, parts.body.endIndex, parts.body
+            )
+            : incoming;
+
+        const catchState = parts.catcher
+            ? evalAliasStateAtOffset(
+                aliases, key, parts.catcher.endIndex, parts.catcher
+            )
+            : false;
+
+        return parts.catcher ? tryState || catchState : tryState;
+    }
+
+    if (task.kind === "try-exit") {
+        const parts = evalAliasTryParts(node);
+
+        return parts.finalizer
+            ? evalAliasStateAtOffset(
+                aliases,
+                key,
+                parts.finalizer.endIndex,
+                parts.finalizer
+            )
+            : incoming;
+    }
+
+    return incoming;
+}
+
+function evalAliasBindingsOf(root) {
+    const writes = [];
+    const controls = [];
+
+    walkRuntime(root, node => {
+        let target = null;
+        let value = null;
+        const offset = node.endIndex;
+
+        if (node.type === "variable_declarator") {
+            target = unwrapTypeOnly(field(node, "name"));
+            value = field(node, "value");
+
+            if (!value) return;
+        } else if (node.type === "assignment_expression") {
+            target = unwrapTypeOnly(field(node, "left"));
+            const right = field(node, "right");
+
+            if (!right) return;
+
+            const leftEnd = target
+                ? target.endIndex - node.startIndex
+                : -1;
+            const rightStart = right.startIndex - node.startIndex;
+            const operator = target
+                ? text(node).slice(leftEnd, rightStart).trim()
+                : "";
+
+            value = operator === "=" ? right : null;
+        } else if (node.type === "update_expression") {
+            target = (node.namedChildren || []).find(
+                child => child.type === "identifier"
+            ) || null;
+
+            value = null;
+        } else {
+            return;
+        }
+
+        if (!target || target.type !== "identifier") return;
+
+        const name = text(target);
+        const scope = spawnNearestBindingScope(target, name);
+        if (!scope) return;
+
+        writes.push({
+            key: `${spawnScopeKey(scope)}:${name}`,
+            value,
+            offset,
+            start: node.startIndex,
+            node,
+            contextPath: evalAliasExecutionPath(node)
+        });
+    });
+
+    walkRuntime(root, node => {
+        if (node.type === "if_statement") {
+            controls.push({
+                kind: "if", node, offset: node.endIndex
+            });
+        } else if (EVAL_ALIAS_LOOP_TYPES.has(node.type)) {
+            controls.push({
+                kind: "loop", node, offset: node.endIndex
+            });
+        } else if (node.type === "switch_statement") {
+            controls.push({
+                kind: "switch", node, offset: node.endIndex
+            });
+        } else if (node.type === "try_statement") {
+            const parts = evalAliasTryParts(node);
+
+            if (parts.finalizer) {
+                controls.push({
+                    kind: "try-enter",
+                    node,
+                    offset: parts.finalizer.startIndex
+                });
+                controls.push({
+                    kind: "try-exit",
+                    node,
+                    offset: node.endIndex
+                });
+            } else {
+                controls.push({
+                    kind: "try-join",
+                    node,
+                    offset: node.endIndex
+                });
+            }
+        }
+    });
+
+    const tasks = [
+        ...writes.map(write => ({
+            kind: "write",
+            node: write.node,
+            offset: write.offset,
+            start: write.start,
+            write
+        })),
+        ...controls
+    ];
+
+    tasks.sort((a, b) =>
+        a.offset - b.offset ||
+        (a.kind === "write" ? -1 : b.kind === "write" ? 1 : 0) ||
+        ((a.node.endIndex - a.node.startIndex) -
+         (b.node.endIndex - b.node.startIndex))
+    );
+
+    const aliases = new Map();
+
+    for (const task of tasks) {
+        if (task.kind === "write") {
+            const write = task.write;
+            const isAlias = write.value
+                ? evalAliasValue(write.value, aliases)
+                : false;
+
+            evalAliasAppendEvent(aliases, write.key, {
+                offset: write.offset,
+                isAlias,
+                contextPath: write.contextPath,
+                node: write.node
+            });
+
+            continue;
+        }
+
+        const contextPath = evalAliasExecutionPath(task.node);
+
+        for (const key of evalAliasControlKeys(task, writes)) {
+            const isAlias = evalAliasControlResult(task, key, aliases);
+
+            evalAliasAppendEvent(aliases, key, {
+                offset: task.offset,
+                isAlias,
+                contextPath,
+                node: task.node
+            });
+        }
+    }
+
+    const functionsByBinding = new Map();
+
+    walkRuntime(root, node => {
+        if (!FUNCTION_SCOPE_TYPES.has(node.type)) return;
+
+        const info = evalAliasFunctionBinding(node);
+        if (!info) return;
+
+        const entries = functionsByBinding.get(info.bindingKey) || [];
+
+        if (!entries.includes(info.functionKey)) {
+            entries.push(info.functionKey);
+        }
+
+        functionsByBinding.set(info.bindingKey, entries);
+    });
+
+    const invocationSites = new Map();
+
+    walkRuntime(root, node => {
+        if (node.type !== "call_expression") return;
+
+        const callee = unwrapTypeOnly(
+            field(node, "function") || (node.namedChildren || [])[0]
+        );
+
+        if (callee?.type !== "identifier") return;
+
+        const bindingKey = evalAliasScopeKey(callee, text(callee));
+        const functionKeys = functionsByBinding.get(bindingKey) || [];
+
+        for (const functionKey of functionKeys) {
+            const sites = invocationSites.get(functionKey) || [];
+            sites.push(node);
+            invocationSites.set(functionKey, sites);
+        }
+    });
+
+    return { aliases, invocationSites };
+}
+
 // ---------------------------------------------------------------------------
 // Extraction
 // ---------------------------------------------------------------------------
@@ -570,6 +1446,7 @@ function extract(content, language = "javascript") {
     facts.ast = true;
 
     const spawnBindings = spawnBindingsOf(ast.root);
+    const evalAliases = evalAliasBindingsOf(ast.root);
     const routes = new Set();
     const exportsFound = new Set();
     const imports = new Set();
@@ -584,7 +1461,7 @@ function extract(content, language = "javascript") {
     walkRuntime(ast.root, node => {
         switch (node.type) {
             case "call_expression":
-                visitCall(node, { facts, routes, imports, calls, signal, spawnBindings });
+                visitCall(node, { facts, routes, imports, calls, signal, spawnBindings, evalAliases });
                 break;
             case "new_expression": {
                 const constructor = field(node, "constructor");
@@ -1016,7 +1893,7 @@ function isSpawnCall({ object, property, raw, callee }, host, spawnBindings) {
 
     return !SPAWN_ONLY_WHEN_BOUND.has(property);
 }
-function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings }) {
+function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings, evalAliases }) {
     const callee = unwrapTypeOnly(field(node, "function") || (node.namedChildren || [])[0]);
     const { object, property, raw } = callTarget(node);
     const sequence = callee?.type === "parenthesized_expression"
@@ -1107,6 +1984,7 @@ function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings 
     // Dynamic code execution. Do not flag arbitrary object methods named eval.
     if (
         indirectGlobalEval ||
+        isEvalAliasReference(callee, evalAliases, node) ||
         (!object && property === "eval" &&
          !isNameShadowed(field(node, "function"), "eval")) ||
         (object === "globalThis" && property === "eval" &&
