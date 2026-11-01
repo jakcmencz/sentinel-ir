@@ -1416,7 +1416,8 @@ function emptyFacts() {
             childProcess: false,
             processExit: false,
             cryptoUse: false,
-            secretComparison: false
+            secretComparison: false,
+            unsafeDeserialization: false
         },
         dangerous: [],
         riskSignals: []
@@ -2158,12 +2159,13 @@ function dangerousOf(operations) {
     if (operations.processSpawn) dangerous.push("process_spawn");
     if (operations.processExit) dangerous.push("process.exit");
     if (operations.diskDelete) dangerous.push("destructive_fs");
+    if (operations.unsafeDeserialization) dangerous.push("unsafe_deserialization");
     return dangerous;
 }
 
 /**
  * Risk from syntax, not from substrings:
- *   critical  dynamic code execution or process spawning
+ *   critical  dynamic code execution, process spawning or unsafe deserialization
  *   high      destructive filesystem operations
  *   medium    other filesystem writes, network I/O, crypto / secret handling
  *   low       pure computation or read-only
@@ -2171,7 +2173,8 @@ function dangerousOf(operations) {
 function riskOf(facts) {
     const operations = facts?.operations || {};
 
-    if (operations.dynamicEval || operations.processSpawn || operations.childProcess) return "critical";
+    if (operations.dynamicEval || operations.processSpawn || operations.childProcess ||
+        operations.unsafeDeserialization) return "critical";
     if (operations.diskDelete) return "high";
     if (operations.diskWrite) return "medium";
     if (operations.outboundHttp || operations.inboundHttp) return "medium";

@@ -11,3 +11,8 @@ unmodified from the npm package tree-sitter-typescript@0.23.2
 (https://github.com/tree-sitter/tree-sitter-typescript),
 Copyright (c) 2017 Max Brunsfeld, MIT License; see
 wasm/LICENSE-tree-sitter-typescript.
+
+wasm/tree-sitter-python.wasm is copied unmodified from the npm package
+tree-sitter-python@0.25.0 (https://github.com/tree-sitter/tree-sitter-python),
+Copyright (c) 2016 Max Brunsfeld, MIT License; see
+wasm/LICENSE-tree-sitter-python.
