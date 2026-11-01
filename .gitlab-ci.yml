@@ -19,6 +19,16 @@ unit_tests:
     - npm ci --cache .npm --prefer-offline
     - npm test
 
+# Python detection recall against Bandit's example findings (pinned commit).
+python_recall:
+  stage: test
+  image: node:22
+  script:
+    - npm ci --cache .npm --prefer-offline
+    - git clone --quiet --depth 1 --branch 1.8.6 https://github.com/PyCQA/bandit.git /tmp/bandit
+    - test "$(git -C /tmp/bandit rev-parse HEAD)" = "2d0b675b04c80ae42277e10500db06a0a37bae17"
+    - node scripts/python-recall.js /tmp/bandit/examples
+
 # Release: push a protected tag vX.Y.Z matching package.json "version".
 # NPM_TOKEN is a masked, protected CI/CD variable; protected tags only.
 publish:
