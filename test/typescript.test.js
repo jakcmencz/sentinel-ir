@@ -14,7 +14,7 @@ test('sync analyze() on TypeScript before initialization is incomplete, not gues
 });
 
 test('LANGUAGES lists the supported grammars', () => {
-    assert.deepEqual(LANGUAGES, ['javascript', 'typescript', 'tsx']);
+    assert.deepEqual(LANGUAGES, ['javascript', 'typescript', 'tsx', 'python']);
 });
 
 test('language is inferred from the target extension', async () => {
@@ -38,12 +38,12 @@ test('an explicit language overrides the extension and accepts short aliases', a
 });
 
 test('an unsupported language is reported, never parsed with the wrong grammar', async () => {
-    const ir = await analyzeAsync('import subprocess\nsubprocess.run(["ls"])', { target: 'a.py', language: 'python' });
-    assert.equal(ir.language, 'python');
+    const ir = await analyzeAsync('system("ls")', { target: 'a.rb', language: 'ruby' });
+    assert.equal(ir.language, 'ruby');
     assert.equal(ir.analysisStatus, 'incomplete');
-    assert.match(ir.facts.error, /unsupported language: python/);
+    assert.match(ir.facts.error, /unsupported language: ruby/);
     assert.equal(compress(ir).facts.ast, false);
-    await assert.rejects(initializeWasm({ languages: ['python'] }), /Unsupported language: python/);
+    await assert.rejects(initializeWasm({ languages: ['ruby'] }), /Unsupported language: ruby/);
 });
 
 test('JavaScript grammar on TypeScript source is incomplete (unchanged 0.1.x behavior)', async () => {

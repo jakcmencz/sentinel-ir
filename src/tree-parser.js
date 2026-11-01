@@ -9,7 +9,8 @@ const CHUNK_SIZE = 8 * 1024;
 const WASM_GRAMMARS = Object.freeze({
     javascript: "tree-sitter-javascript.wasm",
     typescript: "tree-sitter-typescript.wasm",
-    tsx: "tree-sitter-tsx.wasm"
+    tsx: "tree-sitter-tsx.wasm",
+    python: "tree-sitter-python.wasm"
 });
 
 const TreeParser = {

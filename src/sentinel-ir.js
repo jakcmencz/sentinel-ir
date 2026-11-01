@@ -28,15 +28,18 @@
 
 const AstFacts = require("./ast-facts");
 const TreeParser = require("./tree-parser");
+const PythonFacts = require("./python-facts");
 
-const LANGUAGES = Object.freeze(["javascript", "typescript", "tsx"]);
+const LANGUAGES = Object.freeze(["javascript", "typescript", "tsx", "python"]);
 
 const LANGUAGE_ALIASES = Object.freeze({
     javascript: "javascript",
     js: "javascript",
     typescript: "typescript",
     ts: "typescript",
-    tsx: "tsx"
+    tsx: "tsx",
+    python: "python",
+    py: "python"
 });
 
 // File extensions that select a grammar when no `language` option is given.
@@ -49,7 +52,9 @@ const EXTENSION_LANGUAGES = Object.freeze({
     ".ts": "typescript",
     ".mts": "typescript",
     ".cts": "typescript",
-    ".tsx": "tsx"
+    ".tsx": "tsx",
+    ".py": "python",
+    ".pyi": "python"
 });
 
 // Explicit `language` wins; otherwise the target's extension decides. An
@@ -255,7 +260,7 @@ function compressFacts(facts) {
 function analyze(content, options = {}) {
     const opts = readOptions(options);
     const facts = opts.supported
-        ? AstFacts.extract(content, opts.language)
+        ? (opts.language === "python" ? PythonFacts.extract(content) : AstFacts.extract(content, opts.language))
         : {
             ...AstFacts.emptyFacts(),
             error: `unsupported language: ${opts.language} (supported: ${LANGUAGES.join(", ")})`

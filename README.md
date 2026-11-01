@@ -2,7 +2,7 @@
 
 Structural IR for AI reasoning over code.
 
-`sentinel-ir` turns a JavaScript or TypeScript source file into a small, structural JSON
+`sentinel-ir` turns a JavaScript, TypeScript or Python source file into a small, structural JSON
 description — routes, exports, imports, environment reads, network /
 filesystem / process / crypto calls, dangerous syntax and a risk level — built
 from the [tree-sitter](https://tree-sitter.github.io/) AST. You send that IR to
@@ -15,9 +15,10 @@ an LLM instead of the raw file.
 | `javascript` (default) | `tree-sitter-javascript` | `.js` `.mjs` `.cjs` `.jsx`, or no / unknown extension |
 | `typescript` | `tree-sitter-typescript` 0.23.2 | `.ts` `.mts` `.cts` (incl. `.d.ts`) |
 | `tsx` | `tree-sitter-tsx` 0.23.2 | `.tsx` |
+| `python` (alias `py`) | `tree-sitter-python` 0.25.0 | `.py` `.pyi` |
 
 Other languages are not supported. An explicit unsupported `language`
-(e.g. `"python"`) is reported as `analysisStatus: "incomplete"` instead of
+(e.g. `"ruby"`) is reported as `analysisStatus: "incomplete"` instead of
 being parsed with the wrong grammar. Source that does not parse falls back to
 text heuristics and the IR says so (`facts.ast: false`).
 
@@ -130,9 +131,9 @@ initializeWasm().catch((error) => {
 ```
 
 Only the JavaScript grammar is loaded by default. The TypeScript and TSX
-grammars (about 1.4 MB each, uncompressed) are loaded on first use by
-`analyzeAsync()`, or up front with
-`initializeWasm({ languages: ["typescript", "tsx"] })`.
+grammars (about 1.4 MB each, uncompressed) and the Python grammar (about
+0.46 MB) are loaded on first use by `analyzeAsync()`, or up front with
+`initializeWasm({ languages: ["typescript", "tsx", "python"] })`.
 
 ## TypeScript
 
@@ -152,6 +153,38 @@ JavaScript. TypeScript-specific handling:
 
 Not covered: framework decorators (`@Get("/x")`) are not read as routes, and
 path aliases from `tsconfig.json` are not resolved.
+
+## Python
+
+Python produces the same IR shape and the same fact categories as JavaScript
+and TypeScript. Calls are resolved through the file's own imports and simple
+assignments, so `import subprocess as sp; sp.run(...)`,
+`from os import system as sh` and `run = os.popen` are all recognized, and a
+name rebound in the file (`def eval(...)`, a parameter, a local assignment, an
+import from another module) is not mistaken for the builtin.
+
+| fact | Python syntax |
+|---|---|
+| `routes`, `inboundHttp` | Flask / FastAPI / Quart / Sanic decorators such as `@app.route("/x", methods=[...])`, `@router.post("/x")`; `http.server.HTTPServer` |
+| `outboundHttp` | `requests.*`, `httpx.*`, their `Session()` / `Client()` / `AsyncClient()`, `aiohttp.ClientSession()`, `urllib.request.urlopen`, `socket.socket` |
+| `processSpawn` (critical) | `subprocess.run / Popen / call / check_*`, `os.system / popen / exec* / spawn*`, `pty.spawn`, `asyncio.create_subprocess_*` |
+| `childProcess` (critical) | `import subprocess` / `import pty`, like `child_process` in JavaScript |
+| `dynamicEval` (critical) | `eval`, `exec`, `compile` |
+| `unsafeDeserialization` (critical) | `pickle` / `_pickle` / `dill` / `marshal` `load(s)`, `shelve.open`, `jsonpickle.decode`, `pandas.read_pickle`, `yaml.load` without a safe `Loader`, `yaml.unsafe_load`, `numpy.load(..., allow_pickle=True)` |
+| `diskDelete` (high) | `os.remove / unlink / rmdir`, `shutil.rmtree`, `Path(...).unlink() / rmdir()` |
+| `diskWrite` | `open(..., "w" / "a" / "x" / "+")` or a non-literal mode, `shutil.copy / move`, `os.rename / mkdir`, `Path(...).write_text()` … |
+| `env` | `os.environ["X"]`, `os.environ.get("X")`, `os.getenv("X")` |
+| `cryptoUse`, `secretComparison` | `hashlib`, `hmac`, `secrets`, `cryptography`, `bcrypt`, `jwt` …; `==` / `!=` on a secret-looking name |
+| `exports` | `__all__` when it is a literal list, otherwise public top-level `def` and `class` |
+
+`unsafeDeserialization` is new in 0.3.0. It is part of `facts.operations`
+for every language (always `false` for JavaScript and TypeScript), and adds
+`unsafe_deserialization` to `forbidden` / `dangerous`.
+
+Not covered: `from m import *`, names passed through other modules, attributes
+set at runtime (`setattr`, `globals()`), `getattr(os, "system")`, `__import__`
+and `importlib` calls, and comprehension scopes. The grammar also accepts some
+Python 2 syntax (`print "x"`); Python 2 `exec "..."` counts as dynamic code.
 
 ## API
 
@@ -193,13 +226,13 @@ are represented by `analysisStatus: "incomplete"`.
 
 Initializes the bundled WebAssembly parsers without analyzing source
 (default: `["javascript"]`). Needed before the synchronous `analyze()` on
-TypeScript; without it `analyze()` returns `analysisStatus: "incomplete"` for
-TypeScript. Use `analyzeAsync()` for the usual one-step workflow. Rejects for
+TypeScript or Python; without it `analyze()` returns `analysisStatus: "incomplete"` for
+them. Use `analyzeAsync()` for the usual one-step workflow. Rejects for
 an unsupported language.
 
 ### `LANGUAGES`
 
-`["javascript", "typescript", "tsx"]`.
+`["javascript", "typescript", "tsx", "python"]`.
 
 ### `compress(ir)` → `{ analysisStatus, language, mission, world, constraints, forbidden, summary, facts }`
 
@@ -219,8 +252,8 @@ Joins an LLM decision with the IR it was made on:
 
 ### Field reference
 
-- `world.risk` (from the AST): `critical` for dynamic code, process spawning or
-  `child_process`; `high` for file deletion; `medium` for file writes, network,
+- `world.risk` (from the AST): `critical` for dynamic code, process spawning,
+  `child_process` / `subprocess` or unsafe deserialization; `high` for file deletion; `medium` for file writes, network,
   crypto or secret comparison; otherwise `low`.
 - `forbidden`: dangerous capabilities found in the file (`eval`,
   `child_process`, `process_spawn`, …).
@@ -229,7 +262,7 @@ Joins an LLM decision with the IR it was made on:
 
 ## Limitations
 
-- JavaScript and TypeScript only; one file at a time — capabilities split across files are not
+- JavaScript, TypeScript and Python only; one file at a time — capabilities split across files are not
   combined.
 - Facts are syntactic. Aliases the AST cannot resolve (values passed through
   other modules, computed property names) are not followed.
