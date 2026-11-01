@@ -351,6 +351,17 @@ function callArguments(call) {
     return { positional, keywords };
 }
 
+// PyTorch >= 2.6 defaults weights_only to True unless pickle_module is given
+// (and rejects weights_only=True with a pickle_module). Before 2.6, or with
+// TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1, a bare torch.load() unpickles too; the
+// installed version and environment are not visible here.
+function torchLoadUnpickles(positional, keywords) {
+    const given = node => Boolean(node) && text(node) !== "None";
+    const weightsOnly = keywords.get("weights_only");
+    if (given(weightsOnly) && text(weightsOnly) === "True") return false;
+    return given(weightsOnly) || given(keywords.get("pickle_module") || positional[2]);
+}
+
 function rootModule(q) {
     return q.split(".")[0].replace(/\(\)$/, "");
 }
@@ -435,7 +446,7 @@ function extract(content) {
             } else if (DESERIALIZE_CALLS.has(q) ||
                 (YAML_LOAD_CALLS.has(q) && ![...resolve(keywords.get("Loader") || positional[1])].some(l => SAFE_YAML_LOADER.test(l))) ||
                 (q === "numpy.load" && text(keywords.get("allow_pickle")) === "True") ||
-                (q === "torch.load" && text(keywords.get("weights_only")) !== "True")) {
+                (q === "torch.load" && torchLoadUnpickles(positional, keywords))) {
                 ops.unsafeDeserialization = true;
                 calls.dynamic.add(q);
                 signal("unsafe_deserialization", q, call);

@@ -170,7 +170,7 @@ import from another module) is not mistaken for the builtin.
 | `processSpawn` (critical) | `subprocess.run / Popen / call / check_*`, `os.system / popen / exec* / spawn*`, `pty.spawn`, `asyncio.create_subprocess_*`; Python 2 `os.popen2/3/4`, `popen2.*`, `commands.*` |
 | `childProcess` (critical) | `import subprocess` / `import pty`, like `child_process` in JavaScript |
 | `dynamicEval` (critical) | `eval`, `exec`, `compile` |
-| `unsafeDeserialization` (critical) | `pickle` / `_pickle` / `dill` / `marshal` `load(s)` and `Unpickler`, `shelve.open`, `jsonpickle.decode`, `joblib.load`, `pandas.read_pickle`, `yaml.load` without a safe `Loader`, `yaml.unsafe_load`, `numpy.load(..., allow_pickle=True)`, `torch.load` without `weights_only=True` |
+| `unsafeDeserialization` (critical) | `pickle` / `_pickle` / `dill` / `marshal` `load(s)` and `Unpickler`, `shelve.open`, `jsonpickle.decode`, `joblib.load`, `pandas.read_pickle`, `yaml.load` without a safe `Loader`, `yaml.unsafe_load`, `numpy.load(..., allow_pickle=True)`, `torch.load` with `weights_only` other than `True`/`None` or with a `pickle_module` |
 | `diskDelete` (high) | `os.remove / unlink / rmdir`, `shutil.rmtree`, `Path(...).unlink() / rmdir()` |
 | `diskWrite` | `open(..., "w" / "a" / "x" / "+")` or a non-literal mode, `shutil.copy / move`, `os.rename / mkdir`, `Path(...).write_text()` … |
 | `env` | `os.environ["X"]`, `os.environ.get("X")`, `os.getenv("X")` |
@@ -186,6 +186,12 @@ Also resolved (0.3.1): `from m import *`, `six.moves.*`,
 with string literals, and `os` / `subprocess` / `pickle` / `marshal` / `shelve` /
 `shutil` used without an import (a snippet cut from a larger file).
 
+A bare `torch.load(f)` is not reported: PyTorch 2.6+ loads it with
+`weights_only=True`. It does unpickle on PyTorch below 2.6, or when
+`TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1` is set; sentinel-ir sees the source
+file, not the installed version or the environment. (Bandit B614 reports
+the bare call.)
+
 Not covered: names passed through other modules, attributes set at runtime
 (`setattr`, `globals()`), `__import__` / `importlib` with a computed name, and
 comprehension scopes. The grammar also accepts some
@@ -194,10 +200,11 @@ Python 2 syntax (`print "x"`); Python 2 `exec "..."` counts as dynamic code.
 ### Measured detection (0.3.1)
 
 - **Bandit 1.8.6 `examples/`** (independent): of 254 Bandit findings in the
-  categories above, 244 get the matching signal on the same line. All
-  missed ones are `httpx.Client()` / `URLopener()` constructors; the
+  categories above, 242 get the matching signal on the same line (95%).
+  Two are intentional differences: bare `torch.load()` (B614, see above).
+  The other 10 are `httpx.Client()` / `URLopener()` constructors; the
   `.get()` / `.open()` calls made with them are reported. Checked in CI by
-  `scripts/python-recall.js`.
+  `scripts/python-recall.js`, which names each intentional difference.
 - **70+ labeled snippets** in `test/fixtures/python-labeled.js`, including
   hard negatives (comments, strings, shadowed names, `model.eval()`,
   `re.compile`, safe YAML loaders). Written by the analyzer's author, so
