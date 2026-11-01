@@ -233,3 +233,11 @@ test('JavaScript facts keep their shape: one new operation flag, off', async () 
     assert.equal(ir.facts.operations.unsafeDeserialization, false);
     assert.deepEqual(compress(ir).facts, { ast: true });
 });
+
+test('self-referencing assignments resolve in linear time', async () => {
+    const body = Array.from({ length: 40 }, (_, i) => `    x = x.parent if c${i} else x.child\n    y = y.split(x)`).join('\n');
+    const started = Date.now();
+    const ir = await py(`import os\ndef f(x, y):\n${body}\n    os.system(y)`);
+    assert.equal(ir.risk, 'critical');
+    assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
+});

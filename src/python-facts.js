@@ -252,9 +252,15 @@ function createResolver(root) {
         return `${q}()`;
     }
 
+    // Memoized per node; a name whose value refers back to itself
+    // (x = x.parent) resolves to nothing on the cyclic path.
+    const memo = new Map();
     function resolve(node, depth = 0) {
+        if (!node || depth > 20) return new Set();
+        const cached = memo.get(node.id);
+        if (cached) return cached;
         const out = new Set();
-        if (!node || depth > 20) return out;
+        memo.set(node.id, out);
         switch (node.type) {
             case "identifier": {
                 const entries = lookup(node.text, node);
