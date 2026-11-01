@@ -1,0 +1,2330 @@
+{
+ "source": "https://github.com/PyCQA/bandit/tree/1.8.6/examples",
+ "bandit": "1.8.6",
+ "commit": "2d0b675b04c80ae42277e10500db06a0a37bae17",
+ "regenerate": "bandit -r examples -f json  (keep the test ids listed in categories; one finding per file, first line and category)",
+ "categories": {
+  "process_spawn": [
+   "B602",
+   "B603",
+   "B605",
+   "B606",
+   "B609"
+  ],
+  "dynamic_code": [
+   "B102",
+   "B307"
+  ],
+  "unsafe_deserialization": [
+   "B301",
+   "B302",
+   "B506",
+   "B614"
+  ],
+  "crypto_use": [
+   "B303",
+   "B304",
+   "B305",
+   "B324",
+   "B505"
+  ],
+  "outbound_http": [
+   "B113",
+   "B310",
+   "B312",
+   "B321",
+   "B501"
+  ],
+  "filesystem": [
+   "B103"
+  ]
+ },
+ "findings": [
+  {
+   "file": "cipher-modes.py",
+   "lines": [
+    6,
+    6
+   ],
+   "category": "crypto_use",
+   "test": "B305"
+  },
+  {
+   "file": "ciphers.py",
+   "lines": [
+    22,
+    22
+   ],
+   "category": "crypto_use",
+   "test": "B304"
+  },
+  {
+   "file": "ciphers.py",
+   "lines": [
+    24,
+    24
+   ],
+   "category": "crypto_use",
+   "test": "B304"
+  },
+  {
+   "file": "ciphers.py",
+   "lines": [
+    29,
+    29
+   ],
+   "category": "crypto_use",
+   "test": "B303"
+  },
+  {
+   "file": "ciphers.py",
+   "lines": [
+    30,
+    30
+   ],
+   "category": "crypto_use",
+   "test": "B304"
+  },
+  {
+   "file": "ciphers.py",
+   "lines": [
+    32,
+    32
+   ],
+   "category": "crypto_use",
+   "test": "B304"
+  },
+  {
+   "file": "ciphers.py",
+   "lines": [
+    42,
+    42
+   ],
+   "category": "crypto_use",
+   "test": "B304"
+  },
+  {
+   "file": "ciphers.py",
+   "lines": [
+    45,
+    45
+   ],
+   "category": "crypto_use",
+   "test": "B304"
+  },
+  {
+   "file": "ciphers.py",
+   "lines": [
+    52,
+    52
+   ],
+   "category": "crypto_use",
+   "test": "B304"
+  },
+  {
+   "file": "ciphers.py",
+   "lines": [
+    56,
+    56
+   ],
+   "category": "crypto_use",
+   "test": "B304"
+  },
+  {
+   "file": "ciphers.py",
+   "lines": [
+    61,
+    61
+   ],
+   "category": "crypto_use",
+   "test": "B304"
+  },
+  {
+   "file": "ciphers.py",
+   "lines": [
+    63,
+    63
+   ],
+   "category": "crypto_use",
+   "test": "B304"
+  },
+  {
+   "file": "ciphers.py",
+   "lines": [
+    66,
+    66
+   ],
+   "category": "crypto_use",
+   "test": "B304"
+  },
+  {
+   "file": "ciphers.py",
+   "lines": [
+    70,
+    70
+   ],
+   "category": "crypto_use",
+   "test": "B304"
+  },
+  {
+   "file": "ciphers.py",
+   "lines": [
+    74,
+    74
+   ],
+   "category": "crypto_use",
+   "test": "B304"
+  },
+  {
+   "file": "ciphers.py",
+   "lines": [
+    78,
+    78
+   ],
+   "category": "crypto_use",
+   "test": "B304"
+  },
+  {
+   "file": "ciphers.py",
+   "lines": [
+    82,
+    82
+   ],
+   "category": "crypto_use",
+   "test": "B304"
+  },
+  {
+   "file": "ciphers.py",
+   "lines": [
+    86,
+    86
+   ],
+   "category": "crypto_use",
+   "test": "B304"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    13,
+    13
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    14,
+    14
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    16,
+    16
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    18,
+    18
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    20,
+    20
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    24,
+    24
+   ],
+   "category": "crypto_use",
+   "test": "B303"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    25,
+    25
+   ],
+   "category": "crypto_use",
+   "test": "B303"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    26,
+    26
+   ],
+   "category": "crypto_use",
+   "test": "B303"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    27,
+    27
+   ],
+   "category": "crypto_use",
+   "test": "B303"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    29,
+    29
+   ],
+   "category": "crypto_use",
+   "test": "B303"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    30,
+    30
+   ],
+   "category": "crypto_use",
+   "test": "B303"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    31,
+    31
+   ],
+   "category": "crypto_use",
+   "test": "B303"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    32,
+    32
+   ],
+   "category": "crypto_use",
+   "test": "B303"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    34,
+    34
+   ],
+   "category": "crypto_use",
+   "test": "B303"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    35,
+    35
+   ],
+   "category": "crypto_use",
+   "test": "B303"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    37,
+    37
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    38,
+    38
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    39,
+    39
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    44,
+    44
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    45,
+    45
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "crypto-md5.py",
+   "lines": [
+    46,
+    46
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "dill.py",
+   "lines": [
+    6,
+    6
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B301"
+  },
+  {
+   "file": "dill.py",
+   "lines": [
+    11,
+    11
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B301"
+  },
+  {
+   "file": "dill.py",
+   "lines": [
+    14,
+    14
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B301"
+  },
+  {
+   "file": "eval.py",
+   "lines": [
+    3,
+    3
+   ],
+   "category": "dynamic_code",
+   "test": "B307"
+  },
+  {
+   "file": "eval.py",
+   "lines": [
+    4,
+    4
+   ],
+   "category": "dynamic_code",
+   "test": "B307"
+  },
+  {
+   "file": "eval.py",
+   "lines": [
+    5,
+    5
+   ],
+   "category": "dynamic_code",
+   "test": "B307"
+  },
+  {
+   "file": "exec.py",
+   "lines": [
+    1,
+    1
+   ],
+   "category": "dynamic_code",
+   "test": "B102"
+  },
+  {
+   "file": "ftplib.py",
+   "lines": [
+    6,
+    6
+   ],
+   "category": "outbound_http",
+   "test": "B321"
+  },
+  {
+   "file": "hashlib_new_insecure_functions.py",
+   "lines": [
+    3,
+    3
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "hashlib_new_insecure_functions.py",
+   "lines": [
+    5,
+    5
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "hashlib_new_insecure_functions.py",
+   "lines": [
+    7,
+    7
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "hashlib_new_insecure_functions.py",
+   "lines": [
+    9,
+    9
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "hashlib_new_insecure_functions.py",
+   "lines": [
+    11,
+    11
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "hashlib_new_insecure_functions.py",
+   "lines": [
+    13,
+    13
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "hashlib_new_insecure_functions.py",
+   "lines": [
+    15,
+    15
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "hashlib_new_insecure_functions.py",
+   "lines": [
+    17,
+    17
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "hashlib_new_insecure_functions.py",
+   "lines": [
+    20,
+    20
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "imports-aliases.py",
+   "lines": [
+    9,
+    9
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "imports-aliases.py",
+   "lines": [
+    11,
+    11
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "imports-aliases.py",
+   "lines": [
+    12,
+    12
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "imports-aliases.py",
+   "lines": [
+    13,
+    13
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "imports-aliases.py",
+   "lines": [
+    14,
+    14
+   ],
+   "category": "crypto_use",
+   "test": "B324"
+  },
+  {
+   "file": "imports-aliases.py",
+   "lines": [
+    15,
+    15
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B301"
+  },
+  {
+   "file": "jsonpickle.py",
+   "lines": [
+    6,
+    6
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B301"
+  },
+  {
+   "file": "jsonpickle.py",
+   "lines": [
+    8,
+    8
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B301"
+  },
+  {
+   "file": "jsonpickle.py",
+   "lines": [
+    10,
+    10
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B301"
+  },
+  {
+   "file": "marshal_deserialize.py",
+   "lines": [
+    6,
+    6
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B302"
+  },
+  {
+   "file": "marshal_deserialize.py",
+   "lines": [
+    11,
+    11
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B302"
+  },
+  {
+   "file": "multiline_statement.py",
+   "lines": [
+    3,
+    6
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "multiline_statement.py",
+   "lines": [
+    8,
+    13
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "new_candidates-all.py",
+   "lines": [
+    7,
+    7
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "new_candidates-all.py",
+   "lines": [
+    15,
+    15
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B506"
+  },
+  {
+   "file": "new_candidates-some.py",
+   "lines": [
+    7,
+    7
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "nosec.py",
+   "lines": [
+    9,
+    9
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "nosec.py",
+   "lines": [
+    11,
+    11
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "nosec.py",
+   "lines": [
+    17,
+    17
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "os-chmod.py",
+   "lines": [
+    6,
+    6
+   ],
+   "category": "filesystem",
+   "test": "B103"
+  },
+  {
+   "file": "os-chmod.py",
+   "lines": [
+    7,
+    7
+   ],
+   "category": "filesystem",
+   "test": "B103"
+  },
+  {
+   "file": "os-chmod.py",
+   "lines": [
+    8,
+    8
+   ],
+   "category": "filesystem",
+   "test": "B103"
+  },
+  {
+   "file": "os-chmod.py",
+   "lines": [
+    9,
+    9
+   ],
+   "category": "filesystem",
+   "test": "B103"
+  },
+  {
+   "file": "os-chmod.py",
+   "lines": [
+    10,
+    10
+   ],
+   "category": "filesystem",
+   "test": "B103"
+  },
+  {
+   "file": "os-chmod.py",
+   "lines": [
+    11,
+    11
+   ],
+   "category": "filesystem",
+   "test": "B103"
+  },
+  {
+   "file": "os-chmod.py",
+   "lines": [
+    12,
+    12
+   ],
+   "category": "filesystem",
+   "test": "B103"
+  },
+  {
+   "file": "os-chmod.py",
+   "lines": [
+    13,
+    13
+   ],
+   "category": "filesystem",
+   "test": "B103"
+  },
+  {
+   "file": "os-chmod.py",
+   "lines": [
+    14,
+    14
+   ],
+   "category": "filesystem",
+   "test": "B103"
+  },
+  {
+   "file": "os-chmod.py",
+   "lines": [
+    15,
+    15
+   ],
+   "category": "filesystem",
+   "test": "B103"
+  },
+  {
+   "file": "os-chmod.py",
+   "lines": [
+    17,
+    17
+   ],
+   "category": "filesystem",
+   "test": "B103"
+  },
+  {
+   "file": "os-exec.py",
+   "lines": [
+    3,
+    3
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-exec.py",
+   "lines": [
+    4,
+    4
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-exec.py",
+   "lines": [
+    5,
+    5
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-exec.py",
+   "lines": [
+    6,
+    6
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-exec.py",
+   "lines": [
+    7,
+    7
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-exec.py",
+   "lines": [
+    8,
+    8
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-exec.py",
+   "lines": [
+    9,
+    9
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-exec.py",
+   "lines": [
+    10,
+    10
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-popen.py",
+   "lines": [
+    6,
+    6
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "os-popen.py",
+   "lines": [
+    7,
+    7
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "os-popen.py",
+   "lines": [
+    8,
+    8
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "os-popen.py",
+   "lines": [
+    9,
+    9
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "os-popen.py",
+   "lines": [
+    10,
+    10
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "os-popen.py",
+   "lines": [
+    11,
+    11
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "os-popen.py",
+   "lines": [
+    12,
+    12
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "os-popen.py",
+   "lines": [
+    14,
+    14
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "os-popen.py",
+   "lines": [
+    15,
+    15
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "os-spawn.py",
+   "lines": [
+    3,
+    3
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-spawn.py",
+   "lines": [
+    4,
+    4
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-spawn.py",
+   "lines": [
+    5,
+    5
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-spawn.py",
+   "lines": [
+    6,
+    6
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-spawn.py",
+   "lines": [
+    7,
+    7
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-spawn.py",
+   "lines": [
+    8,
+    8
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-spawn.py",
+   "lines": [
+    9,
+    9
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-spawn.py",
+   "lines": [
+    10,
+    10
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-startfile.py",
+   "lines": [
+    3,
+    3
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-startfile.py",
+   "lines": [
+    4,
+    4
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os-startfile.py",
+   "lines": [
+    5,
+    5
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "os_system.py",
+   "lines": [
+    3,
+    3
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "pandas_read_pickle.py",
+   "lines": [
+    12,
+    12
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B301"
+  },
+  {
+   "file": "partial_path_process.py",
+   "lines": [
+    3,
+    3
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "partial_path_process.py",
+   "lines": [
+    4,
+    4
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "partial_path_process.py",
+   "lines": [
+    5,
+    5
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "partial_path_process.py",
+   "lines": [
+    7,
+    7
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "partial_path_process.py",
+   "lines": [
+    8,
+    8
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "partial_path_process.py",
+   "lines": [
+    10,
+    10
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "partial_path_process.py",
+   "lines": [
+    12,
+    12
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "partial_path_process.py",
+   "lines": [
+    13,
+    13
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "pickle_deserialize.py",
+   "lines": [
+    7,
+    7
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B301"
+  },
+  {
+   "file": "pickle_deserialize.py",
+   "lines": [
+    12,
+    12
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B301"
+  },
+  {
+   "file": "pickle_deserialize.py",
+   "lines": [
+    15,
+    15
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B301"
+  },
+  {
+   "file": "popen_wrappers.py",
+   "lines": [
+    5,
+    5
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "popen_wrappers.py",
+   "lines": [
+    6,
+    6
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "popen_wrappers.py",
+   "lines": [
+    11,
+    11
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "popen_wrappers.py",
+   "lines": [
+    12,
+    12
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "popen_wrappers.py",
+   "lines": [
+    13,
+    13
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "popen_wrappers.py",
+   "lines": [
+    14,
+    14
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "popen_wrappers.py",
+   "lines": [
+    15,
+    15
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "pytorch_load.py",
+   "lines": [
+    10,
+    10
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B614"
+  },
+  {
+   "file": "pytorch_load.py",
+   "lines": [
+    18,
+    18
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B614"
+  },
+  {
+   "file": "pytorch_load.py",
+   "lines": [
+    22,
+    22
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B614"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    6,
+    6
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    7,
+    7
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    8,
+    8
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    9,
+    9
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    10,
+    10
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    11,
+    11
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    12,
+    12
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    13,
+    13
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    14,
+    14
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    15,
+    15
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    16,
+    16
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    17,
+    17
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    18,
+    18
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    19,
+    19
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    21,
+    21
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    23,
+    23
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    25,
+    25
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    27,
+    27
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    29,
+    29
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    31,
+    31
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    33,
+    33
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    35,
+    35
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    37,
+    37
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    40,
+    40
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-missing-timeout.py",
+   "lines": [
+    44,
+    44
+   ],
+   "category": "outbound_http",
+   "test": "B113"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    6,
+    6
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    8,
+    8
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    10,
+    10
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    12,
+    12
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    14,
+    14
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    16,
+    16
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    18,
+    18
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    22,
+    22
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    24,
+    24
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    26,
+    26
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    28,
+    28
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    30,
+    30
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    32,
+    32
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    34,
+    34
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    36,
+    36
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    38,
+    38
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    40,
+    40
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "requests-ssl-verify-disabled.py",
+   "lines": [
+    42,
+    42
+   ],
+   "category": "outbound_http",
+   "test": "B501"
+  },
+  {
+   "file": "shelve_open.py",
+   "lines": [
+    8,
+    8
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B301"
+  },
+  {
+   "file": "shelve_open.py",
+   "lines": [
+    11,
+    11
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B301"
+  },
+  {
+   "file": "skip.py",
+   "lines": [
+    1,
+    1
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "skip.py",
+   "lines": [
+    2,
+    2
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "skip.py",
+   "lines": [
+    3,
+    3
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "skip.py",
+   "lines": [
+    5,
+    5
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "skip.py",
+   "lines": [
+    7,
+    7
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    11,
+    11
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    14,
+    14
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    15,
+    15
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    16,
+    16
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    18,
+    20
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    21,
+    21
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    23,
+    23
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    24,
+    24
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    26,
+    26
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    27,
+    27
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    28,
+    28
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    30,
+    30
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    31,
+    31
+   ],
+   "category": "process_spawn",
+   "test": "B605"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    33,
+    33
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    34,
+    34
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    36,
+    36
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    37,
+    37
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    38,
+    38
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    41,
+    41
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    43,
+    43
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    46,
+    46
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    47,
+    47
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    48,
+    48
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    49,
+    49
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    51,
+    51
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    52,
+    52
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    53,
+    53
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    54,
+    54
+   ],
+   "category": "process_spawn",
+   "test": "B602"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    56,
+    56
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    57,
+    57
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    58,
+    58
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    59,
+    59
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "subprocess_shell.py",
+   "lines": [
+    60,
+    60
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "telnetlib.py",
+   "lines": [
+    8,
+    8
+   ],
+   "category": "outbound_http",
+   "test": "B312"
+  },
+  {
+   "file": "urlopen.py",
+   "lines": [
+    17,
+    17
+   ],
+   "category": "outbound_http",
+   "test": "B310"
+  },
+  {
+   "file": "urlopen.py",
+   "lines": [
+    18,
+    18
+   ],
+   "category": "outbound_http",
+   "test": "B310"
+  },
+  {
+   "file": "urlopen.py",
+   "lines": [
+    19,
+    19
+   ],
+   "category": "outbound_http",
+   "test": "B310"
+  },
+  {
+   "file": "urlopen.py",
+   "lines": [
+    22,
+    22
+   ],
+   "category": "outbound_http",
+   "test": "B310"
+  },
+  {
+   "file": "urlopen.py",
+   "lines": [
+    27,
+    27
+   ],
+   "category": "outbound_http",
+   "test": "B310"
+  },
+  {
+   "file": "urlopen.py",
+   "lines": [
+    28,
+    28
+   ],
+   "category": "outbound_http",
+   "test": "B310"
+  },
+  {
+   "file": "urlopen.py",
+   "lines": [
+    29,
+    29
+   ],
+   "category": "outbound_http",
+   "test": "B310"
+  },
+  {
+   "file": "urlopen.py",
+   "lines": [
+    32,
+    32
+   ],
+   "category": "outbound_http",
+   "test": "B310"
+  },
+  {
+   "file": "weak_cryptographic_key_sizes.py",
+   "lines": [
+    38,
+    39
+   ],
+   "category": "crypto_use",
+   "test": "B505"
+  },
+  {
+   "file": "weak_cryptographic_key_sizes.py",
+   "lines": [
+    40,
+    41
+   ],
+   "category": "crypto_use",
+   "test": "B505"
+  },
+  {
+   "file": "weak_cryptographic_key_sizes.py",
+   "lines": [
+    42,
+    44
+   ],
+   "category": "crypto_use",
+   "test": "B505"
+  },
+  {
+   "file": "weak_cryptographic_key_sizes.py",
+   "lines": [
+    45,
+    45
+   ],
+   "category": "crypto_use",
+   "test": "B505"
+  },
+  {
+   "file": "weak_cryptographic_key_sizes.py",
+   "lines": [
+    46,
+    46
+   ],
+   "category": "crypto_use",
+   "test": "B505"
+  },
+  {
+   "file": "weak_cryptographic_key_sizes.py",
+   "lines": [
+    47,
+    47
+   ],
+   "category": "crypto_use",
+   "test": "B505"
+  },
+  {
+   "file": "weak_cryptographic_key_sizes.py",
+   "lines": [
+    48,
+    48
+   ],
+   "category": "crypto_use",
+   "test": "B505"
+  },
+  {
+   "file": "weak_cryptographic_key_sizes.py",
+   "lines": [
+    51,
+    52
+   ],
+   "category": "crypto_use",
+   "test": "B505"
+  },
+  {
+   "file": "weak_cryptographic_key_sizes.py",
+   "lines": [
+    53,
+    54
+   ],
+   "category": "crypto_use",
+   "test": "B505"
+  },
+  {
+   "file": "weak_cryptographic_key_sizes.py",
+   "lines": [
+    55,
+    57
+   ],
+   "category": "crypto_use",
+   "test": "B505"
+  },
+  {
+   "file": "weak_cryptographic_key_sizes.py",
+   "lines": [
+    58,
+    58
+   ],
+   "category": "crypto_use",
+   "test": "B505"
+  },
+  {
+   "file": "weak_cryptographic_key_sizes.py",
+   "lines": [
+    59,
+    59
+   ],
+   "category": "crypto_use",
+   "test": "B505"
+  },
+  {
+   "file": "weak_cryptographic_key_sizes.py",
+   "lines": [
+    60,
+    60
+   ],
+   "category": "crypto_use",
+   "test": "B505"
+  },
+  {
+   "file": "weak_cryptographic_key_sizes.py",
+   "lines": [
+    61,
+    61
+   ],
+   "category": "crypto_use",
+   "test": "B505"
+  },
+  {
+   "file": "wildcard-injection.py",
+   "lines": [
+    5,
+    5
+   ],
+   "category": "process_spawn",
+   "test": "B609"
+  },
+  {
+   "file": "wildcard-injection.py",
+   "lines": [
+    6,
+    6
+   ],
+   "category": "process_spawn",
+   "test": "B609"
+  },
+  {
+   "file": "wildcard-injection.py",
+   "lines": [
+    7,
+    7
+   ],
+   "category": "process_spawn",
+   "test": "B609"
+  },
+  {
+   "file": "wildcard-injection.py",
+   "lines": [
+    8,
+    8
+   ],
+   "category": "process_spawn",
+   "test": "B609"
+  },
+  {
+   "file": "wildcard-injection.py",
+   "lines": [
+    11,
+    11
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "wildcard-injection.py",
+   "lines": [
+    12,
+    12
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "wildcard-injection.py",
+   "lines": [
+    13,
+    13
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "wildcard-injection.py",
+   "lines": [
+    14,
+    15
+   ],
+   "category": "process_spawn",
+   "test": "B603"
+  },
+  {
+   "file": "wildcard-injection.py",
+   "lines": [
+    16,
+    16
+   ],
+   "category": "process_spawn",
+   "test": "B606"
+  },
+  {
+   "file": "yaml_load.py",
+   "lines": [
+    9,
+    9
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B506"
+  },
+  {
+   "file": "yaml_load.py",
+   "lines": [
+    22,
+    22
+   ],
+   "category": "unsafe_deserialization",
+   "test": "B506"
+  }
+ ]
+}

@@ -15,24 +15,37 @@ const { emptyFacts, dangerousOf } = require("./ast-facts");
 
 const SECRETISH = /(token|secret|signature|api[_-]?key|apikey|password|passwd|credential|auth|hmac|digest)/i;
 
-const BUILTINS = new Set(["eval", "exec", "compile", "open", "exit", "quit"]);
+const BUILTINS = new Set(["eval", "exec", "compile", "open", "exit", "quit", "__import__", "getattr"]);
 
-const PROCESS_MODULES = new Set(["subprocess", "pty"]);
+// Standard-library modules that are taken as themselves when the file uses
+// them without importing them (a snippet cut out of a larger file).
+const IMPLICIT_MODULES = new Set([
+    "os", "subprocess", "pty", "pickle", "_pickle", "cPickle", "marshal", "shelve", "shutil", "commands", "popen2"
+]);
+
+const IMPORT_CALLS = new Set(["builtins.__import__", "importlib.import_module"]);
+
+const PROCESS_MODULES = new Set(["subprocess", "pty", "commands", "popen2"]);
 const PROCESS_CALLS = new Set([
     "subprocess.run", "subprocess.call", "subprocess.check_call", "subprocess.check_output",
     "subprocess.Popen", "subprocess.getoutput", "subprocess.getstatusoutput",
     "os.system", "os.popen", "os.startfile", "os.posix_spawn", "os.posix_spawnp",
     "os.execl", "os.execle", "os.execlp", "os.execlpe", "os.execv", "os.execve", "os.execvp", "os.execvpe",
     "os.spawnl", "os.spawnle", "os.spawnlp", "os.spawnlpe", "os.spawnv", "os.spawnve", "os.spawnvp", "os.spawnvpe",
-    "pty.spawn", "asyncio.create_subprocess_exec", "asyncio.create_subprocess_shell"
+    "pty.spawn", "asyncio.create_subprocess_exec", "asyncio.create_subprocess_shell",
+    // Python 2
+    "os.popen2", "os.popen3", "os.popen4", "popen2.popen2", "popen2.popen3", "popen2.popen4",
+    "popen2.Popen3", "popen2.Popen4", "commands.getoutput", "commands.getstatusoutput", "commands.getstatus"
 ]);
 
 const DYNAMIC_CALLS = new Set(["builtins.eval", "builtins.exec", "builtins.compile"]);
 
 const DESERIALIZE_CALLS = new Set([
     "pickle.load", "pickle.loads", "pickle.Unpickler", "_pickle.load", "_pickle.loads",
-    "cPickle.load", "cPickle.loads", "dill.load", "dill.loads", "marshal.load", "marshal.loads",
-    "shelve.open", "jsonpickle.decode", "pandas.read_pickle", "yaml.unsafe_load", "yaml.unsafe_load_all"
+    "cPickle.load", "cPickle.loads", "cPickle.Unpickler", "dill.load", "dill.loads", "dill.Unpickler",
+    "marshal.load", "marshal.loads", "shelve.open", "jsonpickle.decode", "jsonpickle.loads",
+    "jsonpickle.unpickler.decode", "jsonpickle.unpickler.Unpickler", "joblib.load", "pandas.read_pickle",
+    "yaml.unsafe_load", "yaml.unsafe_load_all"
 ]);
 const YAML_LOAD_CALLS = new Set(["yaml.load", "yaml.load_all"]);
 const SAFE_YAML_LOADER = /^yaml\.(SafeLoader|CSafeLoader|BaseLoader|CBaseLoader)$/;
@@ -63,6 +76,8 @@ const OPEN_CALLS = new Map([["builtins.open", 1], ["io.open", 1], ["codecs.open"
 const HTTP_MODULES = new Set(["requests", "httpx"]);
 const HTTP_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "request", "stream", "send", "urlopen"]);
 const HTTP_CLIENTS = new Set(["requests.Session", "requests.session", "httpx.Client", "httpx.AsyncClient", "aiohttp.ClientSession", "urllib3.PoolManager"]);
+const URL_OPENERS = new Set(["urllib.request.URLopener", "urllib.request.FancyURLopener"]);
+const URL_OPENER_METHODS = new Set(["open", "retrieve"]);
 const NETWORK_CALLS = new Set([
     "urllib.request.urlopen", "urllib.request.urlretrieve", "socket.socket", "socket.create_connection",
     "http.client.HTTPConnection", "http.client.HTTPSConnection", "ftplib.FTP", "ftplib.FTP_TLS",
@@ -77,7 +92,7 @@ const ROUTE_HOSTS = new Set(["app", "router", "server", "api", "bp", "blueprint"
 const ROUTE_FACTORIES = new Set(["flask.Flask", "flask.Blueprint", "fastapi.FastAPI", "fastapi.APIRouter", "quart.Quart", "sanic.Sanic"]);
 const ROUTE_METHODS = new Set(["route", "get", "post", "put", "patch", "delete", "head", "options", "websocket", "api_route"]);
 
-const CRYPTO_MODULES = new Set(["hashlib", "hmac", "secrets", "cryptography", "Crypto", "Cryptodome", "nacl", "bcrypt", "jwt", "passlib"]);
+const CRYPTO_MODULES = new Set(["hashlib", "hmac", "secrets", "crypt", "cryptography", "Crypto", "Cryptodome", "nacl", "bcrypt", "jwt", "passlib"]);
 const CONSTANT_COMPARE = new Set(["hmac.compare_digest", "secrets.compare_digest"]);
 
 const SCOPE_TYPES = new Set(["function_definition", "lambda", "class_definition"]);
@@ -123,6 +138,11 @@ function bindingScopeOf(node) {
     return scope;
 }
 
+// six.moves.X is X (six.moves.urllib.request.urlopen -> urllib.request.urlopen).
+function canonical(q) {
+    return q.startsWith("six.moves.") ? q.slice("six.moves.".length) : q;
+}
+
 function moduleName(node) {
     return node.type === "relative_import" ? node.text : text(node);
 }
@@ -148,6 +168,8 @@ function collectBindings(root) {
         }
     };
 
+    const stars = [];
+
     walk(root, node => {
         switch (node.type) {
             case "import_statement":
@@ -165,6 +187,7 @@ function collectBindings(root) {
                 const base = moduleName(source);
                 for (const name of node.namedChildren) {
                     if (name.id === source?.id) continue;
+                    if (name.type === "wildcard_import") stars.push(base);
                     if (name.type === "dotted_name") {
                         add(bindingScopeOf(node), name.text, { kind: "import", q: `${base}.${name.text}` });
                     } else if (name.type === "aliased_import") {
@@ -220,11 +243,11 @@ function collectBindings(root) {
         }
     });
 
-    return scopes;
+    return { scopes, stars };
 }
 
 function createResolver(root) {
-    const scopes = collectBindings(root);
+    const { scopes, stars } = collectBindings(root);
 
     // Python looks a name up in the innermost scope, then enclosing functions
     // (class bodies are skipped), then the module.
@@ -266,10 +289,13 @@ function createResolver(root) {
                 const entries = lookup(node.text, node);
                 if (!entries) {
                     if (BUILTINS.has(node.text)) out.add(`builtins.${node.text}`);
+                    if (IMPLICIT_MODULES.has(node.text)) out.add(node.text);
+                    // from m import * may have bound it to m.<name>.
+                    for (const module of stars) out.add(canonical(`${module}.${node.text}`));
                     break;
                 }
                 for (const entry of entries) {
-                    if (entry.kind === "import") out.add(entry.q);
+                    if (entry.kind === "import") out.add(canonical(entry.q));
                     else if (entry.kind === "alias") for (const q of resolve(entry.value, depth + 1)) out.add(q);
                 }
                 break;
@@ -277,13 +303,26 @@ function createResolver(root) {
             case "attribute": {
                 const attribute = text(field(node, "attribute"));
                 for (const q of resolve(field(node, "object"), depth + 1)) {
-                    out.add(q === PATH && (attribute === "parent") ? PATH : `${q}.${attribute}`);
+                    out.add(q === PATH && (attribute === "parent") ? PATH : canonical(`${q}.${attribute}`));
                 }
                 break;
             }
-            case "call":
-                for (const q of resolve(field(node, "function"), depth + 1)) out.add(callResult(q));
+            case "call": {
+                const { positional, keywords } = callArguments(node);
+                for (const q of resolve(field(node, "function"), depth + 1)) {
+                    // __import__("os") / importlib.import_module("os") is the module;
+                    // getattr(os, "system") is os.system.
+                    const name = stringLiteral(positional[0] || keywords.get("name"));
+                    if (IMPORT_CALLS.has(q) && name) {
+                        out.add(canonical(q === "builtins.__import__" ? name.split(".")[0] : name));
+                    } else if (q === "builtins.getattr" && stringLiteral(positional[1])) {
+                        for (const base of resolve(positional[0], depth + 1)) out.add(canonical(`${base}.${stringLiteral(positional[1])}`));
+                    } else {
+                        out.add(callResult(q));
+                    }
+                }
                 break;
+            }
             case "binary_operator":
                 if (text(field(node, "operator")) === "/") {
                     for (const q of resolve(field(node, "left"), depth + 1)) if (q === PATH) out.add(PATH);
@@ -310,6 +349,17 @@ function callArguments(call) {
         else if (arg.type !== "comment") positional.push(arg);
     }
     return { positional, keywords };
+}
+
+// PyTorch >= 2.6 defaults weights_only to True unless pickle_module is given
+// (and rejects weights_only=True with a pickle_module). Before 2.6, or with
+// TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1, a bare torch.load() unpickles too; the
+// installed version and environment are not visible here.
+function torchLoadUnpickles(positional, keywords) {
+    const given = node => Boolean(node) && text(node) !== "None";
+    const weightsOnly = keywords.get("weights_only");
+    if (given(weightsOnly) && text(weightsOnly) === "True") return false;
+    return given(weightsOnly) || given(keywords.get("pickle_module") || positional[2]);
 }
 
 function rootModule(q) {
@@ -395,7 +445,8 @@ function extract(content) {
                 signal("dynamic_code", evidence, call);
             } else if (DESERIALIZE_CALLS.has(q) ||
                 (YAML_LOAD_CALLS.has(q) && ![...resolve(keywords.get("Loader") || positional[1])].some(l => SAFE_YAML_LOADER.test(l))) ||
-                (q === "numpy.load" && text(keywords.get("allow_pickle")) === "True")) {
+                (q === "numpy.load" && text(keywords.get("allow_pickle")) === "True") ||
+                (q === "torch.load" && torchLoadUnpickles(positional, keywords))) {
                 ops.unsafeDeserialization = true;
                 calls.dynamic.add(q);
                 signal("unsafe_deserialization", q, call);
@@ -426,7 +477,8 @@ function extract(content) {
                 if (mode === null || !/[wax]/.test(mode) || mode.includes("+")) ops.diskRead = true;
             } else if (NETWORK_CALLS.has(q) ||
                 (HTTP_MODULES.has(head) && HTTP_METHODS.has(tail)) ||
-                (head.endsWith("()") && HTTP_CLIENTS.has(head.slice(0, -2)) && HTTP_METHODS.has(tail))) {
+                (head.endsWith("()") && HTTP_CLIENTS.has(head.slice(0, -2)) && HTTP_METHODS.has(tail)) ||
+                (head.endsWith("()") && URL_OPENERS.has(head.slice(0, -2)) && URL_OPENER_METHODS.has(tail))) {
                 ops.outboundHttp = true;
                 calls.network.add(q);
                 signal("outbound_http", q, call);

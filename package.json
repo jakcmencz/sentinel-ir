@@ -1,6 +1,6 @@
 {
   "name": "sentinel-ir",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Structural IR for AI reasoning over code: turns JavaScript, TypeScript and Python into compact tree-sitter facts for an LLM instead of the raw file",
   "main": "src/sentinel-ir.js",
   "files": [
@@ -21,7 +21,8 @@
   ],
   "scripts": {
     "test": "node --test test/*.test.js",
-    "example": "node examples/basic.js"
+    "example": "node examples/basic.js",
+    "recall:python": "node scripts/python-recall.js"
   },
   "keywords": [
     "llm",
