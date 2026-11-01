@@ -372,3 +372,115 @@ for (const [name, source, expected] of shadowingRegressionCases) {
         );
     });
 }
+
+const evalAliasControlFlowRegressionCases = [
+    [
+        'switch fallthrough carries an eval alias into the next case',
+        `
+            let execute = function (x) { return x; };
+            switch (mode) {
+                case 0:
+                    execute = eval;
+                case 1:
+                    execute("x");
+                    break;
+                default:
+                    execute = function (x) { return x; };
+            }
+        `,
+        true
+    ],
+    [
+        'switch break prevents an eval alias reaching the next case',
+        `
+            let execute = function (x) { return x; };
+            switch (mode) {
+                case 0:
+                    execute = eval;
+                    break;
+                case 1:
+                    execute("x");
+                    break;
+            }
+        `,
+        false
+    ],
+    [
+        'a later switch case overwrites the alias before the call',
+        `
+            let execute = function (x) { return x; };
+            switch (mode) {
+                case 0:
+                    execute = eval;
+                case 1:
+                    execute = function (x) { return x; };
+                    break;
+                case 2:
+                    execute("x");
+                    break;
+            }
+        `,
+        false
+    ],
+    [
+        'eval alias assigned before throw is visible in catch',
+        `
+            let execute = function (x) { return x; };
+            try {
+                execute = eval;
+                throw new Error("test");
+            } catch (error) {
+                execute("x");
+            }
+        `,
+        true
+    ],
+    [
+        'throw before eval alias assignment does not taint catch',
+        `
+            let execute = function (x) { return x; };
+            try {
+                throw new Error("test");
+                execute = eval;
+            } catch (error) {
+                execute("x");
+            }
+        `,
+        false
+    ],
+    [
+        'assignment in try without a later explicit throw does not taint catch',
+        `
+            let execute = function (x) { return x; };
+            try {
+                execute = eval;
+            } catch (error) {
+                execute("x");
+            }
+        `,
+        false
+    ]
+];
+
+for (const [name, source, expected] of evalAliasControlFlowRegressionCases) {
+    test(`eval alias control-flow regression: ${name}`, () => {
+        const facts = AstFacts.extract(source);
+
+        assert.equal(facts.ast, true, 'source must parse successfully');
+        assert.equal(
+            Boolean(facts.operations.dynamicEval),
+            expected,
+            'dynamic eval detection must match the expected control flow'
+        );
+        assert.equal(
+            AstFacts.riskOf(facts),
+            expected ? 'critical' : 'low'
+        );
+
+        assert.equal(
+            facts.riskSignals.some(signal => signal.signal === 'dynamic_code'),
+            expected,
+            'dynamic code risk signal must agree with the expected result'
+        );
+    });
+}
