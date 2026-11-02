@@ -214,7 +214,7 @@ Python 2 syntax (`print "x"`); Python 2 `exec "..."` counts as dynamic code.
 
 ## Native code
 
-New in 0.4.0. Native code runs outside the language runtime: it can read and
+New in 0.4.0, hardened in 0.4.1 and 0.4.2. Native code runs outside the language runtime: it can read and
 write any memory of the process (including an agent's keys, tokens and
 prompts) and do anything the other facts describe without showing up as them.
 The Python `ctypes` documentation says it can "compromise the running
@@ -224,21 +224,37 @@ process". `nativeCode` is in `facts.operations` for every language; when it is
 
 | language | reported |
 |---|---|
-| Python | loading a library: `ctypes.CDLL / PyDLL / WinDLL / OleDLL / LibraryLoader`, `ctypes.cdll / windll / oledll / pydll .LoadLibrary` or attribute (`windll.kernel32`), `_ctypes.dlopen`; calling into it: `libc.system(...)`, `windll.kernel32.VirtualAlloc(...)`, `ctypes.pythonapi.*`; function pointers: `CFUNCTYPE / WINFUNCTYPE / PYFUNCTYPE`; raw memory: `memmove`, `memset`, `string_at`, `wstring_at`, `cast`, `<type>.from_address`; `cffi` `FFI().dlopen / verify / memmove` and calls into a `dlopen` result |
-| JavaScript / TypeScript | `process.dlopen`, `process.binding` / `process._linkedBinding` (Node internals; `process.binding("spawn_sync")` spawns without `child_process`), `Deno.dlopen`, `require` / `import` of a `*.node` addon, and calls through `koffi`, `ffi-napi`, `ffi`, `ref-napi`, `bun:ffi`, `bindings`, `node-gyp-build` |
+| Python | loading a library: `ctypes.CDLL / PyDLL / WinDLL / OleDLL / LibraryLoader`, `ctypes.cdll / windll / oledll / pydll .LoadLibrary` or attribute (`windll.kernel32`), `_ctypes.dlopen`; calling into it: `libc.system(...)`, `windll.kernel32.VirtualAlloc(...)`, `ctypes.pythonapi.*`; function pointers: `CFUNCTYPE / WINFUNCTYPE / PYFUNCTYPE`; raw memory: `memmove`, `memset`, `string_at`, `wstring_at`, `cast`, `<type>.from_address` (also on a `ctypes.Structure` subclass), indexing a `ctypes.pointer` / `POINTER(...)` result other than `p[0]` (`p[1000] = 5`, `p[:n]`); `cffi` `FFI().dlopen / verify / memmove`, compiling C with `ffi.set_source` / `ffi.compile`, `ffi.cast` to a pointer type and calls into a `dlopen` result; `mmap.mmap` with `PROT_EXEC`; `win32api.LoadLibrary(Ex)`, `numpy.ctypeslib.load_library`, `llvmlite.binding.create_mcjit_compiler` |
+| JavaScript / TypeScript | `process.dlopen`, `process.binding` / `process._linkedBinding` (Node internals; `process.binding("spawn_sync")` spawns without `child_process`), also through an alias (`const p = process`, `const { dlopen } = process`, `globalThis.process`, `require("process")`, `import ... from "node:process"`) or as a value (`process.dlopen.call(...)`, `Reflect.apply(process.dlopen, ...)`, `(0, process.dlopen)(...)`); `Deno.dlopen`; `require` / `import` / `module.require` / a `createRequire` function of a `*.node` addon, including built paths (`"./build/" + name + ".node"`, `path.join(dir, "addon.node")`); calls (and `new`) through `koffi`, `ffi-napi` (also scoped forks such as `@napi-ffi/ffi-napi`), `ffi`, `ffi-rs`, `ref-napi`, `bun:ffi`, `bindings`, `node-gyp-build` |
 
 Not reported: `import ctypes` (or `require("koffi")`) on its own, `ctypes`
 types, `sizeof`, `create_string_buffer`, `Structure`, `ctypes.util.find_library`.
 Names are resolved like the other facts (aliases, `from ctypes import CDLL as
-load`, `getattr(ctypes, "CDLL")`, `__import__("ctypes")`); in JavaScript the
-binding of an FFI module is not scope-aware, so a later local variable with the
-same name is still counted. Not covered: Python C extension modules
-(`import _mymodule` from a `.so`), `mmap` with executable pages,
-`sys.modules` / `importlib` loaders, WebAssembly, and native code reached
-through another file.
+load`, `getattr(ctypes, "CDLL")`, `__import__("ctypes")`, `sys.modules["ctypes"]`,
+`vars(ctypes)["CDLL"]`, `ctypes.__dict__["CDLL"]`, `cdll["libc.so.6"]`,
+`n = "CDLL"; getattr(ctypes, n)`). A member name built at run time
+(`getattr(ctypes, "CD" + "LL")`, `process["dl" + "open"](...)`, `process[n](...)`)
+is reported, because it can be any loader; `getattr(ctypes, "c_" + kind)` picks
+a C type and is not. A
+parameter or local variable that shadows `process` or an FFI binding (`function
+f(koffi) { koffi.load() }`) is not counted. Not covered: Python C extension modules (`import _mymodule`
+from a `.so`), indexing a pointer that was not created by `pointer()` /
+`POINTER(T)()` in the same file, `importlib` loaders, WebAssembly, and native code reached
+through another file. Code passed to `exec` / `eval` is already critical as
+dynamic code.
+
+Source that does not parse (`analysisStatus: "incomplete"`) falls back to text
+matching, which is stricter: a `ctypes` loader or memory function, any
+`dlopen(`, `process.dlopen` / `binding`, a `*.node` path or an FFI module
+import (`koffi`, `ffi-napi`, `bun:ffi`, ...) is enough for `native_code`, since
+an incomplete parse cannot show that the import is unused.
 
 Bandit has no rule for `ctypes` / `cffi`, so this fact is measured only on the
-labeled cases in `test/native-code.test.js` and `test/fixtures/python-labeled.js`.
+labeled cases in `test/native-code.test.js` and `test/fixtures/python-labeled.js`,
+and on a generated matrix (`test/native-matrix.test.js`): every `ctypes` API in
+16 access forms, every `process` native method in 22 forms and every FFI module
+in 12 import forms, each in JavaScript, TypeScript and TSX, plus the same forms
+with a harmless member that must not be reported.
 
 ## API
 

@@ -137,6 +137,12 @@ const TreeParser = {
         return parser;
     },
 
+    // WebAssembly trees live outside the JS heap and are not garbage collected;
+    // without this a long-running process runs out of parser memory.
+    release(ast) {
+        if (typeof ast?.tree?.delete === "function") ast.tree.delete();
+    },
+
     parse(content, language = "javascript") {
         try {
             if (typeof content !== "string") {
@@ -159,6 +165,7 @@ const TreeParser = {
             return {
                 ok: true,
                 language,
+                tree,
                 root,
                 nodes: this.extractNodes(root),
                 metrics: {

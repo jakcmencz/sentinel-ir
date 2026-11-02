@@ -63,13 +63,15 @@ const CHILD_PROCESS_MODULES = new Set(["child_process", "node:child_process"]);
 
 // Modules whose exports load or call native code: FFI, raw memory, .node addon loaders.
 const NATIVE_MODULES = new Set([
-    "ffi-napi", "@2060.io/ffi-napi", "ffi", "node-ffi", "koffi", "ref-napi", "ref",
+    "ffi-napi", "ffi", "node-ffi", "koffi", "ref-napi", "ref", "ffi-rs",
     "bun:ffi", "bindings", "node-gyp-build"
 ]);
 
 // process.dlopen loads a shared library; process.binding exposes Node internals
 // (process.binding("spawn_sync") spawns without child_process).
 const NATIVE_PROCESS_METHODS = new Set(["dlopen", "binding", "_linkedBinding"]);
+const PROCESS_MODULES = new Set(["process", "node:process"]);
+const PROCESS_OBJECTS = new Set(["process", "globalThis.process", "global.process"]);
 
 const CRYPTO_METHODS = new Set([
     "createHash", "createHmac", "createCipheriv", "createDecipheriv", "pbkdf2", "pbkdf2Sync",
@@ -1445,8 +1447,16 @@ function hasParseError(ast) {
 }
 
 function extract(content, language = "javascript") {
-    const facts = emptyFacts();
     const ast = TreeParser.parse(String(content || ""), language);
+    try {
+        return extractFrom(ast);
+    } finally {
+        TreeParser.release(ast);
+    }
+}
+
+function extractFrom(ast) {
+    const facts = emptyFacts();
 
     // A partial parse would report proven absences that are really parser gaps,
     // so anything with an ERROR node is handed back to the text fallback.
@@ -1478,6 +1488,14 @@ function extract(content, language = "javascript") {
                 break;
             case "new_expression": {
                 const constructor = field(node, "constructor");
+                if (constructor?.type === "member_expression") {
+                    // new ffi.Library("libc", {...})
+                    const object = exprText(field(constructor, "object")).split("\n")[0];
+                    const nativeEvidence = nativeCallEvidence({
+                        object, property: text(field(constructor, "property")), callee: constructor, host: rootObjectOf(object)
+                    }, nativeBindings);
+                    if (nativeEvidence) markNative(facts, calls, signal, nativeEvidence, node);
+                }
                 const constructorObject = constructor && field(constructor, "object");
                 const constructorProperty = constructor && field(constructor, "property");
                 const constructorIndex = constructor && field(constructor, "index");
@@ -1509,6 +1527,7 @@ function extract(content, language = "javascript") {
             }
             case "member_expression":
                 visitMember(node, { facts, env, signal });
+                visitNativeReference(node, { facts, calls, signal, nativeBindings });
                 break;
             case "subscript_expression":
                 visitSubscript(node, { env, signal });
@@ -1939,7 +1958,15 @@ function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings,
             if (isNativeAddonPath(source)) {
                 markNative(facts, calls, signal, `${property}(*.node)`, node);
             }
+        } else if (isNativeAddonArg(callArgs[0])) {
+            markNative(facts, calls, signal, `${property}(*.node)`, node);
         }
+        return;
+    }
+
+    // createRequire(url)("./addon.node"), module.require("./addon.node"), r("./addon.node")
+    if ((!object || (object === "module" && property === "require")) && isNativeAddonArg(callArgs[0])) {
+        markNative(facts, calls, signal, "require(*.node)", node);
         return;
     }
 
@@ -2182,29 +2209,87 @@ function isNativeAddonPath(source) {
     return typeof source === "string" && /\.node$/.test(source);
 }
 
+function isNativeModule(source) {
+    return NATIVE_MODULES.has(source) || /^@[^/]+\/(ffi-napi|ref-napi|koffi|ffi-rs)$/.test(source || "");
+}
+
+// require(`${dir}/addon.node`), require("./build/" + name + ".node"),
+// require(path.join(__dirname, "addon.node"))
+function isNativeAddonArg(node) {
+    node = unwrapTypeOnly(node);
+    if (!node) return false;
+    if (node.type === "string" || node.type === "template_string") return /\.node["'`]$/.test(text(node));
+    if (node.type === "binary_expression") return isNativeAddonArg(field(node, "right"));
+    if (node.type === "call_expression") {
+        const callArgs = args(node);
+        return isNativeAddonArg(callArgs[callArgs.length - 1]);
+    }
+    return false;
+}
+
 function markNative(facts, calls, signal, evidence, node) {
     facts.operations.nativeCode = true;
     calls.dynamic.add(evidence);
     signal("native_code", evidence, node);
 }
 
-// Local names bound to a NATIVE_MODULES import, mapped to "module" or
-// "module.export". Not scope-aware: a later shadowing binding is still counted.
+function sameNode(a, b) {
+    return !!a && !!b && a.startIndex === b.startIndex && a.endIndex === b.endIndex && a.type === b.type;
+}
+
+function rootIdentifierOf(node) {
+    let current = node;
+    while (current && (current.type === "member_expression" || current.type === "subscript_expression")) {
+        current = field(current, "object");
+    }
+    return current;
+}
+
+// A binding between the reference and the scope that declared the native name
+// (function f(koffi) { koffi.load() }) means it is a different value.
+function shadowedNative(reference, name, declaration) {
+    for (let current = reference?.parent; current && current.type !== "program"; current = current.parent) {
+        const scoped = (FUNCTION_SCOPE_TYPES.has(current.type) && functionScopeHasBinding(current, name)) ||
+            (LEXICAL_SCOPE_TYPES.has(current.type) && lexicalScopeHasBinding(current, name));
+        if (!scoped) continue;
+        return !(declaration && declaration.startIndex >= current.startIndex && declaration.endIndex <= current.endIndex);
+    }
+    return false;
+}
+
+// Local names bound to a native module import ("module" or "module.export"),
+// or to process itself ("process", "process.dlopen"). `declarations` keeps the
+// binding identifier so shadowing can be checked.
 function nativeBindingsOf(root) {
     const names = new Map();
+    const declarations = new Map();
+    names.declarations = declarations;
+    const set = (id, value) => {
+        names.set(text(id), value);
+        declarations.set(text(id), id);
+    };
+    const member = (id, source, key) => {
+        if (!id || !key) return;
+        if (source === "process") {
+            if (NATIVE_PROCESS_METHODS.has(key)) set(id, `process.${key}`);
+        } else {
+            set(id, `${source}.${key}`);
+        }
+    };
+    const normalise = source => PROCESS_MODULES.has(source) ? "process" : isNativeModule(source) ? source : null;
     const bind = (target, source) => {
-        if (!target || !NATIVE_MODULES.has(source)) return;
+        source = normalise(source);
+        if (!target || !source) return;
         if (target.type === "identifier") {
-            names.set(text(target), source);
+            set(target, source);
             return;
         }
         walk(target, node => {
             if (node.type === "shorthand_property_identifier_pattern") {
-                names.set(text(node), `${source}.${text(node)}`);
+                member(node, source, text(node));
             } else if (node.type === "pair_pattern") {
-                const key = field(node, "key");
                 const value = field(node, "value");
-                if (value?.type === "identifier") names.set(text(value), `${source}.${text(key)}`);
+                if (value?.type === "identifier") member(value, source, text(field(node, "key")));
             }
         });
     };
@@ -2214,7 +2299,9 @@ function nativeBindingsOf(root) {
             if (value?.type === "await_expression") {
                 value = unwrapTypeOnly(field(value, "argument") || (value.namedChildren || [])[0]);
             }
-            if (value?.type === "call_expression") {
+            if (value && PROCESS_OBJECTS.has(text(value))) {
+                bind(field(node, "name"), "process");
+            } else if (value?.type === "call_expression") {
                 const { object, property } = callTarget(value);
                 if (!object && (property === "require" || property === "import")) {
                     bind(field(node, "name"), stringLiteral(args(value)[0]));
@@ -2222,8 +2309,8 @@ function nativeBindingsOf(root) {
             }
         } else if (node.type === "import_statement" && !isTypeOnlyImport(node)) {
             const requireClause = importRequireClauseOf(node);
-            const source = stringLiteral(field(requireClause || node, "source"));
-            if (!NATIVE_MODULES.has(source)) return;
+            const source = normalise(stringLiteral(field(requireClause || node, "source")));
+            if (!source) return;
             if (requireClause) {
                 bind((requireClause.namedChildren || []).find(child => child.type === "identifier"), source);
                 return;
@@ -2231,14 +2318,10 @@ function nativeBindingsOf(root) {
             walk(node, child => {
                 if (child.type === "import_specifier") {
                     const name = field(child, "name");
-                    const alias = field(child, "alias") || name;
-                    if (name && alias) names.set(text(alias), `${source}.${text(name)}`);
-                } else if (child.type === "namespace_import") {
+                    member(field(child, "alias") || name, source, name && text(name));
+                } else if (child.type === "namespace_import" || child.type === "import_clause") {
                     const id = (child.namedChildren || []).find(c => c.type === "identifier");
-                    if (id) names.set(text(id), source);
-                } else if (child.type === "import_clause") {
-                    const id = (child.namedChildren || []).find(c => c.type === "identifier");
-                    if (id) names.set(text(id), source);
+                    if (id) set(id, source);
                 }
             });
         }
@@ -2246,23 +2329,70 @@ function nativeBindingsOf(root) {
     return names;
 }
 
+// globalThis["process"] -> globalThis.process
+function processObjectText(object) {
+    return typeof object === "string" ? object.replace(/\[\s*(["'`])process\1\s*\]/g, ".process") : object;
+}
+
 function nativeCallEvidence({ object, property, callee, host }, nativeBindings) {
-    if (object === "process" && NATIVE_PROCESS_METHODS.has(property)) return `process.${property}`;
+    object = processObjectText(object);
+    const root = rootIdentifierOf(callee);
+    // process[name](...) with a name built at run time can be dlopen.
+    if (callee?.type === "subscript_expression" && property === null &&
+        (nativeBindings.get(object) === "process" ||
+            (PROCESS_OBJECTS.has(object) && !nativeBindings.has("process") && !isNameShadowed(root, "process")))) {
+        return "process[<dynamic>]";
+    }
+    const bound = name => nativeBindings.has(name) &&
+        !shadowedNative(root, name, nativeBindings.declarations.get(name));
+    if (object && host && bound(host)) {
+        const value = nativeBindings.get(host);
+        if (value !== "process") return `${value}.${property}`;
+        return object === host && NATIVE_PROCESS_METHODS.has(property) ? `process.${property}` : null;
+    }
+    if (!object && property && bound(property)) {
+        const value = nativeBindings.get(property);
+        return value === "process" ? null : value;
+    }
+    if (PROCESS_OBJECTS.has(object) && NATIVE_PROCESS_METHODS.has(property) &&
+        !nativeBindings.has("process") && !isNameShadowed(root, "process")) return `process.${property}`;
     if (object === "Deno" && property === "dlopen") return "Deno.dlopen";
-    if (object && host && nativeBindings.has(host)) return `${nativeBindings.get(host)}.${property}`;
-    if (!object && property && nativeBindings.has(property)) return nativeBindings.get(property);
-    // require("bindings")("addon") / require("koffi").load(...)
+    // require("bindings")("addon") / require("koffi").load(...) / require("process").dlopen(...)
     let inner = callee;
     while (inner?.type === "member_expression") inner = field(inner, "object");
     if (inner?.type === "call_expression") {
         const target = callTarget(inner);
         const source = stringLiteral(args(inner)[0]);
-        if (!target.object && (target.property === "require" || target.property === "import") &&
-            NATIVE_MODULES.has(source)) {
+        if (target.object || (target.property !== "require" && target.property !== "import")) return null;
+        if (PROCESS_MODULES.has(source)) {
+            return sameNode(field(callee, "object"), inner) && NATIVE_PROCESS_METHODS.has(property)
+                ? `process.${property}` : null;
+        }
+        if (isNativeModule(source)) {
             return property && callee?.type === "member_expression" ? `${source}.${property}` : source;
         }
     }
     return null;
+}
+
+// process.dlopen.call(...), Reflect.apply(process.dlopen, ...), const b = process.binding
+function visitNativeReference(node, { facts, calls, signal, nativeBindings }) {
+    const property = text(field(node, "property"));
+    if (!NATIVE_PROCESS_METHODS.has(property)) return;
+    const object = processObjectText(exprText(field(node, "object")));
+    const root = rootIdentifierOf(node);
+    const isProcess = nativeBindings.get(object) === "process"
+        ? !shadowedNative(root, object, nativeBindings.declarations.get(object))
+        : PROCESS_OBJECTS.has(object) && !nativeBindings.has("process") && !isNameShadowed(root, "process");
+    if (!isProcess) return;
+    const parent = node.parent;
+    // (0, process.dlopen)(...) is an indirect call.
+    const used = parent?.type === "arguments" || parent?.type === "sequence_expression" ||
+        (parent?.type === "variable_declarator" && sameNode(field(parent, "value"), node)) ||
+        (parent?.type === "assignment_expression" && sameNode(field(parent, "right"), node)) ||
+        (parent?.type === "member_expression" && sameNode(field(parent, "object"), node) &&
+            ["call", "apply", "bind"].includes(text(field(parent, "property"))));
+    if (used) markNative(facts, calls, signal, `process.${property}`, node);
 }
 
 // ---------------------------------------------------------------------------
