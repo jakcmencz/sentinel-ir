@@ -54,7 +54,7 @@ const NATIVE_CALLS = new Set([
     "ctypes.CFUNCTYPE", "ctypes.WINFUNCTYPE", "ctypes.PYFUNCTYPE",
     "ctypes.memmove", "ctypes.memset", "ctypes.string_at", "ctypes.wstring_at", "ctypes.cast",
     "_ctypes.dlopen", "_ctypes.LoadLibrary", "_ctypes.call_function", "_ctypes.call_cdeclfunction",
-    "cffi.FFI().dlopen", "cffi.FFI().verify", "cffi.FFI().memmove",
+    "cffi.FFI().dlopen", "cffi.FFI().verify", "cffi.FFI().memmove", "cffi.FFI().compile", "cffi.FFI().set_source",
     "numpy.ctypeslib.load_library", "win32api.LoadLibrary", "win32api.LoadLibraryEx",
     "llvmlite.binding.create_mcjit_compiler"
 ]);
@@ -68,6 +68,9 @@ const NATIVE_LOADER_RESULT = /\b(CDLL|PyDLL|WinDLL|OleDLL|LibraryLoader|LoadLibr
 const NATIVE_SUBSCRIPT = /^ctypes\.(cdll|windll|oledll|pydll)$/;
 
 const DYNAMIC_NAME = "<dynamic>";
+// p[0] reads the pointed-to value; any other index or a slice reads or writes
+// memory next to it, unchecked.
+const POINTER_RESULT = /^ctypes\.(pointer|POINTER\(\))\(\)$/;
 const NATIVE_DYNAMIC_BASE = /^(_?ctypes(\.(cdll|windll|oledll|pydll|pythonapi))?|cffi\.FFI\(\))$/;
 
 // getattr(ctypes, "c_" + kind) picks a C type, not a loader.
@@ -615,6 +618,14 @@ function extractFrom(ast) {
                 break;
             case "subscript": {
                 const value = field(node, "value");
+                const index = field(node, "subscript");
+                const pointer = [...resolve(value)].find(q => POINTER_RESULT.test(q));
+                if (pointer && text(index) !== "0") {
+                    const evidence = `${pointer}[${text(index).slice(0, 20)}]`;
+                    ops.nativeCode = true;
+                    calls.dynamic.add(evidence);
+                    signal("native_code", evidence, node);
+                }
                 if ([...resolve(value)].includes("os.environ")) {
                     const name = stringLiteral(field(node, "subscript"));
                     if (name) addEnv(name, node);

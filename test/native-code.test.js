@@ -162,3 +162,31 @@ test('0.4.1: shadowed names, feature checks and non-executable mappings are not 
         assert.equal(ir.facts.operations.nativeCode, false, source);
     }
 });
+
+test('0.4.2: pointer indexing beyond p[0] and compiling C with cffi are native code', async () => {
+    const native = [
+        'import ctypes\nctypes.pointer(x)[1000] = 5',
+        'import ctypes\np = ctypes.pointer(x)\nleak = p[-8]',
+        'from ctypes import pointer\np = pointer(x)\ndata = p[:4096]',
+        'import ctypes\np = ctypes.POINTER(ctypes.c_char)(x)\np[i] = 0',
+        'from cffi import FFI\nffibuilder = FFI()\nffibuilder.set_source("_x", "int f(void) { return 1; }")\nffibuilder.compile()',
+        'import cffi\ncffi.FFI().compile()'
+    ];
+    for (const source of native) {
+        const ir = await analyzeAsync(source, { language: 'python' });
+        assert.equal(ir.facts.operations.nativeCode, true, source);
+        assert.equal(ir.risk, 'critical', source);
+    }
+    for (const source of [
+        'import ctypes\np = ctypes.pointer(x)\nvalue = p[0]',
+        'import ctypes\nctypes.pointer(x)[0] = 5',
+        'items = [1, 2]\nitems[1000] = 5',
+        're.compile("x")[0:2]',
+        'class B:\n    def set_source(self, s):\n        pass\nB().set_source("x")'
+    ]) {
+        const ir = await analyzeAsync(source, { language: 'python' });
+        assert.equal(ir.facts.operations.nativeCode, false, source);
+    }
+    const broken = await analyzeAsync('from cffi import FFI\nb = FFI()\nb.set_source("_x", "")\ndef (:', { language: 'python' });
+    assert.ok(broken.forbidden.includes('native_code'));
+});

@@ -189,6 +189,7 @@ const NATIVE_TEXT = new RegExp([
     /\b_?ctypes\.(cdll|windll|oledll|pydll|pythonapi|memmove|memset|string_at|wstring_at|cfunctype|winfunctype|dlopen)\b/,
     /\bfrom\s+_?ctypes\s+import\b[^\n]*\b(cdll|windll|oledll|pydll|pythonapi|memmove|memset|string_at|wstring_at|cfunctype|winfunctype|\*)/,
     /\bdlopen\s*\(/,
+    /\.set_source\s*\(/,
     /\bprocess\s*\.\s*(dlopen|binding|_linkedbinding)\b/,
     /\b(require|import)\s*\(\s*["'`][^"'`\n]*\.node["'`]/,
     /\bfrom\s+["'][^"'\n]*\.node["']/,

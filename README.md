@@ -224,7 +224,7 @@ process". `nativeCode` is in `facts.operations` for every language; when it is
 
 | language | reported |
 |---|---|
-| Python | loading a library: `ctypes.CDLL / PyDLL / WinDLL / OleDLL / LibraryLoader`, `ctypes.cdll / windll / oledll / pydll .LoadLibrary` or attribute (`windll.kernel32`), `_ctypes.dlopen`; calling into it: `libc.system(...)`, `windll.kernel32.VirtualAlloc(...)`, `ctypes.pythonapi.*`; function pointers: `CFUNCTYPE / WINFUNCTYPE / PYFUNCTYPE`; raw memory: `memmove`, `memset`, `string_at`, `wstring_at`, `cast`, `<type>.from_address` (also on a `ctypes.Structure` subclass); `cffi` `FFI().dlopen / verify / memmove`, `ffi.cast` to a pointer type and calls into a `dlopen` result; `mmap.mmap` with `PROT_EXEC`; `win32api.LoadLibrary(Ex)`, `numpy.ctypeslib.load_library`, `llvmlite.binding.create_mcjit_compiler` |
+| Python | loading a library: `ctypes.CDLL / PyDLL / WinDLL / OleDLL / LibraryLoader`, `ctypes.cdll / windll / oledll / pydll .LoadLibrary` or attribute (`windll.kernel32`), `_ctypes.dlopen`; calling into it: `libc.system(...)`, `windll.kernel32.VirtualAlloc(...)`, `ctypes.pythonapi.*`; function pointers: `CFUNCTYPE / WINFUNCTYPE / PYFUNCTYPE`; raw memory: `memmove`, `memset`, `string_at`, `wstring_at`, `cast`, `<type>.from_address` (also on a `ctypes.Structure` subclass), indexing a `ctypes.pointer` / `POINTER(...)` result other than `p[0]` (`p[1000] = 5`, `p[:n]`); `cffi` `FFI().dlopen / verify / memmove`, compiling C with `ffi.set_source` / `ffi.compile`, `ffi.cast` to a pointer type and calls into a `dlopen` result; `mmap.mmap` with `PROT_EXEC`; `win32api.LoadLibrary(Ex)`, `numpy.ctypeslib.load_library`, `llvmlite.binding.create_mcjit_compiler` |
 | JavaScript / TypeScript | `process.dlopen`, `process.binding` / `process._linkedBinding` (Node internals; `process.binding("spawn_sync")` spawns without `child_process`), also through an alias (`const p = process`, `const { dlopen } = process`, `globalThis.process`, `require("process")`, `import ... from "node:process"`) or as a value (`process.dlopen.call(...)`, `Reflect.apply(process.dlopen, ...)`, `(0, process.dlopen)(...)`); `Deno.dlopen`; `require` / `import` / `module.require` / a `createRequire` function of a `*.node` addon, including built paths (`"./build/" + name + ".node"`, `path.join(dir, "addon.node")`); calls (and `new`) through `koffi`, `ffi-napi` (also scoped forks such as `@napi-ffi/ffi-napi`), `ffi`, `ffi-rs`, `ref-napi`, `bun:ffi`, `bindings`, `node-gyp-build` |
 
 Not reported: `import ctypes` (or `require("koffi")`) on its own, `ctypes`
@@ -237,9 +237,7 @@ load`, `getattr(ctypes, "CDLL")`, `__import__("ctypes")`, `sys.modules["ctypes"]
 is reported, because it can be any loader; `getattr(ctypes, "c_" + kind)` picks
 a C type and is not. A
 parameter or local variable that shadows `process` or an FFI binding (`function
-f(koffi) { koffi.load() }`) is not counted. Not covered: out-of-bounds
-pointer indexing (`ctypes.pointer(x)[1000] = 5`), compiling C with
-`ffi.compile()` / `set_source`, Python C extension modules (`import _mymodule`
+f(koffi) { koffi.load() }`) is not counted. Not covered: Python C extension modules (`import _mymodule`
 from a `.so`), `importlib` loaders, WebAssembly, and native code reached
 through another file. Code passed to `exec` / `eval` is already critical as
 dynamic code.
