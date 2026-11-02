@@ -104,3 +104,61 @@ test('nativeCode is part of the operations shape for every language', async () =
         assert.equal(ir.facts.operations.nativeCode, false, language);
     }
 });
+
+test('0.4.1: aliases, indirect calls and computed paths of native code are still critical', async () => {
+    for (const [language, source] of [
+        ['python', 'import ctypes\nlib = ctypes.cdll["libc.so.6"]\nlib.system(b"id")'],
+        ['python', 'import ctypes\nctypes.cdll["libc.so.6"].system(b"id")'],
+        ['python', 'import sys\nsys.modules["ctypes"].CDLL("x")'],
+        ['python', 'import ctypes\nctypes.__dict__["CDLL"]("x")'],
+        ['python', 'import ctypes\nvars(ctypes)["CDLL"]("x")'],
+        ['python', 'import ctypes\nclass S(ctypes.Structure): pass\nS.from_address(0x10)'],
+        ['python', 'import mmap\nm = mmap.mmap(-1, 4096, prot=mmap.PROT_READ | mmap.PROT_WRITE | mmap.PROT_EXEC)'],
+        ['python', 'import cffi\nffi = cffi.FFI()\nffi.cast("char *", 1234)[0]'],
+        ['python', 'import win32api\nwin32api.LoadLibrary("x")'],
+        ['python', 'import numpy\nnumpy.ctypeslib.load_library("x", ".")'],
+        ['python', 'import llvmlite.binding as llvm\nllvm.create_mcjit_compiler(m, t)'],
+        ['javascript', 'const p = process; p.dlopen(module, "x")'],
+        ['javascript', 'const { dlopen } = process; dlopen(module, "x")'],
+        ['javascript', 'const { binding: b } = process; b("fs")'],
+        ['javascript', 'globalThis.process.dlopen(module, "x")'],
+        ['javascript', 'globalThis["process"].dlopen(module, "x")'],
+        ['javascript', 'require("process").dlopen(module, "x")'],
+        ['javascript', 'import { dlopen } from "node:process"; dlopen(module, "x")'],
+        ['typescript', 'import * as p from "node:process";\np.dlopen(module, "x");'],
+        ['javascript', 'process.dlopen.call(process, module, "x")'],
+        ['javascript', 'Reflect.apply(process.dlopen, process, [module, "x"])'],
+        ['javascript', '(0, process.dlopen)(module, "x")'],
+        ['javascript', 'const b = process.binding; b("fs")'],
+        ['javascript', 'require("./build/" + name + ".node")'],
+        ['javascript', 'require(path.join(__dirname, "addon.node"))'],
+        ['javascript', 'module.require("./x.node")'],
+        ['javascript', 'require("node:module").createRequire(__filename)("./a.node")'],
+        ['javascript', 'const { createRequire } = require("module"); const r = createRequire(import.meta.url); r("./addon.node")'],
+        ['javascript', 'const ffi = require("@napi-ffi/ffi-napi"); ffi.Library("x", {})'],
+        ['javascript', 'const ffi = require("ffi-napi"); new ffi.Library("libc", {})']
+    ]) {
+        const ir = await analyzeAsync(source, { language });
+        assert.equal(ir.analysisStatus, 'complete', source);
+        assert.equal(ir.facts.operations.nativeCode, true, source);
+        assert.equal(ir.risk, 'critical', source);
+    }
+});
+
+test('0.4.1: shadowed names, feature checks and non-executable mappings are not native code', async () => {
+    for (const [language, source] of [
+        ['javascript', 'function f(process) { process.dlopen(1) }'],
+        ['javascript', 'const koffi = require("koffi"); function g(koffi) { koffi.load("x") }'],
+        ['javascript', 'if (typeof process.binding === "function") {} if (process.dlopen) {}'],
+        ['javascript', 'const p = process; p.cwd(); const { env } = process; env.X; require("process").cwd()'],
+        ['javascript', 'fs.readFileSync("./x.node"); console.log("build/addon.node")'],
+        ['python', 'import mmap\nm = mmap.mmap(-1, 10)'],
+        ['python', 'import cffi\nffi = cffi.FFI()\nffi.cast("int", x)'],
+        ['python', 'class S: pass\nS.from_address(1)'],
+        ['python', 'def f(ctypes):\n    return ctypes.CDLL("x")']
+    ]) {
+        const ir = await analyzeAsync(source, { language });
+        assert.equal(ir.analysisStatus, 'complete', source);
+        assert.equal(ir.facts.operations.nativeCode, false, source);
+    }
+});

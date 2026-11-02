@@ -54,7 +54,9 @@ const NATIVE_CALLS = new Set([
     "ctypes.CFUNCTYPE", "ctypes.WINFUNCTYPE", "ctypes.PYFUNCTYPE",
     "ctypes.memmove", "ctypes.memset", "ctypes.string_at", "ctypes.wstring_at", "ctypes.cast",
     "_ctypes.dlopen", "_ctypes.LoadLibrary", "_ctypes.call_function", "_ctypes.call_cdeclfunction",
-    "cffi.FFI().dlopen", "cffi.FFI().verify", "cffi.FFI().memmove"
+    "cffi.FFI().dlopen", "cffi.FFI().verify", "cffi.FFI().memmove",
+    "numpy.ctypeslib.load_library", "win32api.LoadLibrary", "win32api.LoadLibraryEx",
+    "llvmlite.binding.create_mcjit_compiler"
 ]);
 const NATIVE_LIBRARY = /^(ctypes\.(cdll|windll|oledll|pydll|pythonapi)\.|ctypes\.(CDLL|PyDLL|WinDLL|OleDLL|LibraryLoader)\(\)\.|cffi\.FFI\(\)\.dlopen\(\)\.)/;
 
@@ -62,10 +64,17 @@ const NATIVE_LIBRARY = /^(ctypes\.(cdll|windll|oledll|pydll|pythonapi)\.|ctypes\
 // value a native function returned (lib.f().decode), which is plain Python.
 const NATIVE_LOADER_RESULT = /\b(CDLL|PyDLL|WinDLL|OleDLL|LibraryLoader|LoadLibrary|FFI|dlopen)\(\)/g;
 
-function isNativeCall(q) {
+// cdll["libc.so.6"] is cdll.libc.so.6; sys.modules["ctypes"] is ctypes.
+const NATIVE_SUBSCRIPT = /^ctypes\.(cdll|windll|oledll|pydll)$/;
+
+function isNativeCall(q, call, positional, usesCtypes) {
     if (NATIVE_CALLS.has(q)) return true;
     if (NATIVE_LIBRARY.test(q)) return !q.replace(NATIVE_LOADER_RESULT, "").includes("()");
-    return q.startsWith("ctypes.") && q.endsWith(".from_address");
+    // ffi.cast("char *", address) turns an integer into a pointer.
+    if (q === "cffi.FFI().cast") return (stringLiteral(positional[0]) || "").includes("*");
+    if (q === "mmap.mmap") return text(call).includes("PROT_EXEC");
+    // Structure subclasses: class S(ctypes.Structure) ... S.from_address(a).
+    return q.endsWith(".from_address") && (q.startsWith("ctypes.") || usesCtypes());
 }
 
 const YAML_LOAD_CALLS = new Set(["yaml.load", "yaml.load_all"]);
@@ -344,6 +353,21 @@ function createResolver(root) {
                 }
                 break;
             }
+            case "subscript": {
+                const name = stringLiteral(field(node, "subscript"));
+                if (!name) break;
+                const value = field(node, "value");
+                // vars(ctypes)["CDLL"] / ctypes.__dict__["CDLL"] is ctypes.CDLL.
+                const varsOf = value?.type === "call" && text(field(value, "function")) === "vars" && !lookup("vars", value)
+                    ? callArguments(value).positional[0] : null;
+                for (const base of varsOf ? resolve(varsOf, depth + 1) : []) out.add(canonical(`${base}.${name}`));
+                for (const q of resolve(value, depth + 1)) {
+                    if (q.endsWith(".__dict__")) out.add(canonical(`${q.slice(0, -".__dict__".length)}.${name}`));
+                    else if (NATIVE_SUBSCRIPT.test(q)) out.add(`${q}.${name}`);
+                    else if (q === "sys.modules") out.add(canonical(name));
+                }
+                break;
+            }
             case "binary_operator":
                 if (text(field(node, "operator")) === "/") {
                     for (const q of resolve(field(node, "left"), depth + 1)) if (q === PATH) out.add(PATH);
@@ -448,8 +472,18 @@ function extract(content) {
         signal("inbound_http", `${text(host)}.${method}`, decorator);
     };
 
+    const usesCtypes = () => [...imports].some(m => m === "ctypes" || m === "_ctypes" || m.startsWith("ctypes."));
+
     const visitCall = (call) => {
         const { positional, keywords } = callArguments(call);
+        const fn = field(call, "function");
+        // class S(ctypes.Structure) ... S.from_address(address): S resolves to nothing.
+        if (fn?.type === "attribute" && text(field(fn, "attribute")) === "from_address" &&
+            resolve(fn).size === 0 && usesCtypes()) {
+            ops.nativeCode = true;
+            calls.dynamic.add(`${text(field(fn, "object"))}.from_address`);
+            signal("native_code", `${text(field(fn, "object"))}.from_address`, call);
+        }
         for (const q of resolve(field(call, "function"))) {
             const dot = q.lastIndexOf(".");
             const head = q.slice(0, dot);
@@ -459,7 +493,7 @@ function extract(content) {
                 ops.processSpawn = true;
                 calls.process.add(q);
                 signal("process_spawn", q, call);
-            } else if (isNativeCall(q)) {
+            } else if (isNativeCall(q, call, positional, usesCtypes)) {
                 ops.nativeCode = true;
                 calls.dynamic.add(q);
                 signal("native_code", q, call);
