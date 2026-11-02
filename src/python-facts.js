@@ -67,8 +67,19 @@ const NATIVE_LOADER_RESULT = /\b(CDLL|PyDLL|WinDLL|OleDLL|LibraryLoader|LoadLibr
 // cdll["libc.so.6"] is cdll.libc.so.6; sys.modules["ctypes"] is ctypes.
 const NATIVE_SUBSCRIPT = /^ctypes\.(cdll|windll|oledll|pydll)$/;
 
+const DYNAMIC_NAME = "<dynamic>";
+const NATIVE_DYNAMIC_BASE = /^(_?ctypes(\.(cdll|windll|oledll|pydll|pythonapi))?|cffi\.FFI\(\))$/;
+
+// getattr(ctypes, "c_" + kind) picks a C type, not a loader.
+function isCtypesTypeName(node) {
+    const first = node?.type === "binary_operator" ? field(node, "left") : node;
+    const literal = node?.type === "string" ? text(node) : first?.type === "string" ? text(first) : "";
+    return /^[a-z]*["']c_/i.test(literal);
+}
+
 function isNativeCall(q, call, positional, usesCtypes) {
     if (NATIVE_CALLS.has(q)) return true;
+    if (q.includes(`.${DYNAMIC_NAME}`)) return true;
     if (NATIVE_LIBRARY.test(q)) return !q.replace(NATIVE_LOADER_RESULT, "").includes("()");
     // ffi.cast("char *", address) turns an integer into a pointer.
     if (q === "cffi.FFI().cast") return (stringLiteral(positional[0]) || "").includes("*");
@@ -298,6 +309,16 @@ function createResolver(root) {
         return null;
     }
 
+    // A literal, or a name bound only to literals: n = "CDLL"; getattr(ctypes, n).
+    function attributeNames(node) {
+        const literal = stringLiteral(node);
+        if (literal) return [literal];
+        if (node.type !== "identifier") return null;
+        const entries = lookup(node.text, node);
+        if (!entries || !entries.every(e => e.kind === "alias" && stringLiteral(e.value))) return null;
+        return entries.map(e => stringLiteral(e.value));
+    }
+
     function callResult(q) {
         if (PATH_FACTORY.test(q)) return PATH;
         const dot = q.lastIndexOf(".");
@@ -345,8 +366,13 @@ function createResolver(root) {
                     const name = stringLiteral(positional[0] || keywords.get("name"));
                     if (IMPORT_CALLS.has(q) && name) {
                         out.add(canonical(q === "builtins.__import__" ? name.split(".")[0] : name));
-                    } else if (q === "builtins.getattr" && stringLiteral(positional[1])) {
-                        for (const base of resolve(positional[0], depth + 1)) out.add(canonical(`${base}.${stringLiteral(positional[1])}`));
+                    } else if (q === "builtins.getattr" && positional[1]) {
+                        const names = attributeNames(positional[1]);
+                        for (const base of resolve(positional[0], depth + 1)) {
+                            if (names) for (const n of names) out.add(canonical(`${base}.${n}`));
+                            // getattr(ctypes, name) with a name built at run time can be any loader.
+                            else if (NATIVE_DYNAMIC_BASE.test(base) && !isCtypesTypeName(positional[1])) out.add(`${base}.${DYNAMIC_NAME}`);
+                        }
                     } else {
                         out.add(callResult(q));
                     }

@@ -214,7 +214,7 @@ Python 2 syntax (`print "x"`); Python 2 `exec "..."` counts as dynamic code.
 
 ## Native code
 
-New in 0.4.0. Native code runs outside the language runtime: it can read and
+New in 0.4.0, hardened in 0.4.1 and 0.4.2. Native code runs outside the language runtime: it can read and
 write any memory of the process (including an agent's keys, tokens and
 prompts) and do anything the other facts describe without showing up as them.
 The Python `ctypes` documentation says it can "compromise the running
@@ -231,18 +231,31 @@ Not reported: `import ctypes` (or `require("koffi")`) on its own, `ctypes`
 types, `sizeof`, `create_string_buffer`, `Structure`, `ctypes.util.find_library`.
 Names are resolved like the other facts (aliases, `from ctypes import CDLL as
 load`, `getattr(ctypes, "CDLL")`, `__import__("ctypes")`, `sys.modules["ctypes"]`,
-`vars(ctypes)["CDLL"]`, `ctypes.__dict__["CDLL"]`, `cdll["libc.so.6"]`). A
+`vars(ctypes)["CDLL"]`, `ctypes.__dict__["CDLL"]`, `cdll["libc.so.6"]`,
+`n = "CDLL"; getattr(ctypes, n)`). A member name built at run time
+(`getattr(ctypes, "CD" + "LL")`, `process["dl" + "open"](...)`, `process[n](...)`)
+is reported, because it can be any loader; `getattr(ctypes, "c_" + kind)` picks
+a C type and is not. A
 parameter or local variable that shadows `process` or an FFI binding (`function
-f(koffi) { koffi.load() }`) is not counted. Not covered: names built at run time
-(`getattr(ctypes, "CD" + "LL")`, `process["dl" + "open"]`), out-of-bounds
+f(koffi) { koffi.load() }`) is not counted. Not covered: out-of-bounds
 pointer indexing (`ctypes.pointer(x)[1000] = 5`), compiling C with
 `ffi.compile()` / `set_source`, Python C extension modules (`import _mymodule`
 from a `.so`), `importlib` loaders, WebAssembly, and native code reached
 through another file. Code passed to `exec` / `eval` is already critical as
 dynamic code.
 
+Source that does not parse (`analysisStatus: "incomplete"`) falls back to text
+matching, which is stricter: a `ctypes` loader or memory function, any
+`dlopen(`, `process.dlopen` / `binding`, a `*.node` path or an FFI module
+import (`koffi`, `ffi-napi`, `bun:ffi`, ...) is enough for `native_code`, since
+an incomplete parse cannot show that the import is unused.
+
 Bandit has no rule for `ctypes` / `cffi`, so this fact is measured only on the
-labeled cases in `test/native-code.test.js` and `test/fixtures/python-labeled.js`.
+labeled cases in `test/native-code.test.js` and `test/fixtures/python-labeled.js`,
+and on a generated matrix (`test/native-matrix.test.js`): every `ctypes` API in
+16 access forms, every `process` native method in 22 forms and every FFI module
+in 12 import forms, each in JavaScript, TypeScript and TSX, plus the same forms
+with a harmless member that must not be reported.
 
 ## API
 

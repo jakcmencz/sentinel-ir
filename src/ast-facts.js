@@ -2329,6 +2329,12 @@ function processObjectText(object) {
 function nativeCallEvidence({ object, property, callee, host }, nativeBindings) {
     object = processObjectText(object);
     const root = rootIdentifierOf(callee);
+    // process[name](...) with a name built at run time can be dlopen.
+    if (callee?.type === "subscript_expression" && property === null &&
+        (nativeBindings.get(object) === "process" ||
+            (PROCESS_OBJECTS.has(object) && !nativeBindings.has("process") && !isNameShadowed(root, "process")))) {
+        return "process[<dynamic>]";
+    }
     const bound = name => nativeBindings.has(name) &&
         !shadowedNative(root, name, nativeBindings.declarations.get(name));
     if (object && host && bound(host)) {

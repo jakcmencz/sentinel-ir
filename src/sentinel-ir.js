@@ -183,7 +183,17 @@ function inferRisk(filePath, content = "", facts = null) {
 }
 
 // Text-fallback counterpart of the native_code fact (lower-cased source).
-const NATIVE_TEXT = /\bctypes\.(cdll|windll|oledll|pydll|pythonapi|memmove|memset|string_at)\b|\bprocess\.(dlopen|binding)\(|\bdeno\.dlopen\(/;
+// Unparseable code: any trace of a native loader or FFI module counts, since an
+// incomplete parse is no proof that the import is unused.
+const NATIVE_TEXT = new RegExp([
+    /\b_?ctypes\.(cdll|windll|oledll|pydll|pythonapi|memmove|memset|string_at|wstring_at|cfunctype|winfunctype|dlopen)\b/,
+    /\bfrom\s+_?ctypes\s+import\b[^\n]*\b(cdll|windll|oledll|pydll|pythonapi|memmove|memset|string_at|wstring_at|cfunctype|winfunctype|\*)/,
+    /\bdlopen\s*\(/,
+    /\bprocess\s*\.\s*(dlopen|binding|_linkedbinding)\b/,
+    /\b(require|import)\s*\(\s*["'`][^"'`\n]*\.node["'`]/,
+    /\bfrom\s+["'][^"'\n]*\.node["']/,
+    /(\brequire\s*\(\s*|\bfrom\s+|\bimport\s+)["'`](@[^/"'`]+\/)?(koffi|ffi-napi|ffi|node-ffi|ffi-rs|ref-napi|bun:ffi|bindings|node-gyp-build)["'`]/
+].map(r => r.source).join("|"));
 
 function inferForbidden(content = "", facts = null) {
     if (facts?.ast) {
