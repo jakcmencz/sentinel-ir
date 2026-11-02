@@ -161,7 +161,8 @@ function inferRisk(filePath, content = "", facts = null) {
         lower.includes("eval") ||
         lower.includes("process.exit") ||
         lower.includes("exec(") ||
-        lower.includes("spawn(")
+        lower.includes("spawn(") ||
+        NATIVE_TEXT.test(lower)
     ) {
         return "critical";
     }
@@ -181,6 +182,9 @@ function inferRisk(filePath, content = "", facts = null) {
     return "low";
 }
 
+// Text-fallback counterpart of the native_code fact (lower-cased source).
+const NATIVE_TEXT = /\bctypes\.(cdll|windll|oledll|pydll|pythonapi|memmove|memset|string_at)\b|\bprocess\.(dlopen|binding)\(|\bdeno\.dlopen\(/;
+
 function inferForbidden(content = "", facts = null) {
     if (facts?.ast) {
         return [...new Set(facts.dangerous || [])];
@@ -193,6 +197,7 @@ function inferForbidden(content = "", facts = null) {
     if (lower.includes("process.exit")) forbidden.push("process.exit");
     if (lower.includes("fs.rm")) forbidden.push("fs.rm");
     if (lower.includes("child_process")) forbidden.push("child_process");
+    if (NATIVE_TEXT.test(lower)) forbidden.push("native_code");
 
     return [...new Set(forbidden)];
 }
