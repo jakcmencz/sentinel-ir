@@ -238,7 +238,8 @@ is reported, because it can be any loader; `getattr(ctypes, "c_" + kind)` picks
 a C type and is not. A
 parameter or local variable that shadows `process` or an FFI binding (`function
 f(koffi) { koffi.load() }`) is not counted. Not covered: Python C extension modules (`import _mymodule`
-from a `.so`), `importlib` loaders, WebAssembly, and native code reached
+from a `.so`), indexing a pointer that was not created by `pointer()` /
+`POINTER(T)()` in the same file, `importlib` loaders, WebAssembly, and native code reached
 through another file. Code passed to `exec` / `eval` is already critical as
 dynamic code.
 
