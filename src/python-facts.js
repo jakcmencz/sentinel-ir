@@ -20,7 +20,7 @@ const BUILTINS = new Set(["eval", "exec", "compile", "open", "exit", "quit", "__
 // Standard-library modules that are taken as themselves when the file uses
 // them without importing them (a snippet cut out of a larger file).
 const IMPLICIT_MODULES = new Set([
-    "os", "subprocess", "pty", "pickle", "_pickle", "cPickle", "marshal", "shelve", "shutil", "commands", "popen2"
+    "os", "subprocess", "pty", "pickle", "_pickle", "cPickle", "marshal", "shelve", "shutil", "commands", "popen2", "ctypes"
 ]);
 
 const IMPORT_CALLS = new Set(["builtins.__import__", "importlib.import_module"]);
@@ -47,6 +47,27 @@ const DESERIALIZE_CALLS = new Set([
     "jsonpickle.unpickler.decode", "jsonpickle.unpickler.Unpickler", "joblib.load", "pandas.read_pickle",
     "yaml.unsafe_load", "yaml.unsafe_load_all"
 ]);
+// Native code through ctypes / cffi: loading a shared library, calling into it,
+// building a C function pointer, or reading and writing raw memory addresses.
+const NATIVE_CALLS = new Set([
+    "ctypes.CDLL", "ctypes.PyDLL", "ctypes.WinDLL", "ctypes.OleDLL", "ctypes.LibraryLoader",
+    "ctypes.CFUNCTYPE", "ctypes.WINFUNCTYPE", "ctypes.PYFUNCTYPE",
+    "ctypes.memmove", "ctypes.memset", "ctypes.string_at", "ctypes.wstring_at", "ctypes.cast",
+    "_ctypes.dlopen", "_ctypes.LoadLibrary", "_ctypes.call_function", "_ctypes.call_cdeclfunction",
+    "cffi.FFI().dlopen", "cffi.FFI().verify", "cffi.FFI().memmove"
+]);
+const NATIVE_LIBRARY = /^(ctypes\.(cdll|windll|oledll|pydll|pythonapi)\.|ctypes\.(CDLL|PyDLL|WinDLL|OleDLL|LibraryLoader)\(\)\.|cffi\.FFI\(\)\.dlopen\(\)\.)/;
+
+// The "()" a library loader returns; any other "()" in a name is a call on a
+// value a native function returned (lib.f().decode), which is plain Python.
+const NATIVE_LOADER_RESULT = /\b(CDLL|PyDLL|WinDLL|OleDLL|LibraryLoader|LoadLibrary|FFI|dlopen)\(\)/g;
+
+function isNativeCall(q) {
+    if (NATIVE_CALLS.has(q)) return true;
+    if (NATIVE_LIBRARY.test(q)) return !q.replace(NATIVE_LOADER_RESULT, "").includes("()");
+    return q.startsWith("ctypes.") && q.endsWith(".from_address");
+}
+
 const YAML_LOAD_CALLS = new Set(["yaml.load", "yaml.load_all"]);
 const SAFE_YAML_LOADER = /^yaml\.(SafeLoader|CSafeLoader|BaseLoader|CBaseLoader)$/;
 
@@ -438,6 +459,10 @@ function extract(content) {
                 ops.processSpawn = true;
                 calls.process.add(q);
                 signal("process_spawn", q, call);
+            } else if (isNativeCall(q)) {
+                ops.nativeCode = true;
+                calls.dynamic.add(q);
+                signal("native_code", q, call);
             } else if (DYNAMIC_CALLS.has(q)) {
                 const evidence = q.slice("builtins.".length);
                 ops.dynamicEval = true;

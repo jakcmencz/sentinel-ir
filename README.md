@@ -171,6 +171,7 @@ import from another module) is not mistaken for the builtin.
 | `childProcess` (critical) | `import subprocess` / `import pty`, like `child_process` in JavaScript |
 | `dynamicEval` (critical) | `eval`, `exec`, `compile` |
 | `unsafeDeserialization` (critical) | `pickle` / `_pickle` / `dill` / `marshal` `load(s)` and `Unpickler`, `shelve.open`, `jsonpickle.decode`, `joblib.load`, `pandas.read_pickle`, `yaml.load` without a safe `Loader`, `yaml.unsafe_load`, `numpy.load(..., allow_pickle=True)`, `torch.load` with `weights_only` other than `True`/`None` or with a `pickle_module` |
+| `nativeCode` (critical) | `ctypes.CDLL / PyDLL / WinDLL / OleDLL`, `ctypes.cdll / windll / oledll / pydll / pythonapi.*`, calls into a loaded library, `CFUNCTYPE`, `memmove / memset / string_at / cast / from_address`, `cffi` `dlopen / verify / memmove` (see [Native code](#native-code)) |
 | `diskDelete` (high) | `os.remove / unlink / rmdir`, `shutil.rmtree`, `Path(...).unlink() / rmdir()` |
 | `diskWrite` | `open(..., "w" / "a" / "x" / "+")` or a non-literal mode, `shutil.copy / move`, `os.rename / mkdir`, `Path(...).write_text()` … |
 | `env` | `os.environ["X"]`, `os.environ.get("X")`, `os.getenv("X")` |
@@ -210,6 +211,34 @@ Python 2 syntax (`print "x"`); Python 2 `exec "..."` counts as dynamic code.
   `re.compile`, safe YAML loaders). Written by the analyzer's author, so
   they test intent, not an independent ground truth.
 - Not measured: precision on a labeled real-world corpus.
+
+## Native code
+
+New in 0.4.0. Native code runs outside the language runtime: it can read and
+write any memory of the process (including an agent's keys, tokens and
+prompts) and do anything the other facts describe without showing up as them.
+The Python `ctypes` documentation says it can "compromise the running
+process". `nativeCode` is in `facts.operations` for every language; when it is
+`true` the risk is `critical` and `forbidden` / `dangerous` contain
+`native_code`. Each call is a `native_code` signal with its line.
+
+| language | reported |
+|---|---|
+| Python | loading a library: `ctypes.CDLL / PyDLL / WinDLL / OleDLL / LibraryLoader`, `ctypes.cdll / windll / oledll / pydll .LoadLibrary` or attribute (`windll.kernel32`), `_ctypes.dlopen`; calling into it: `libc.system(...)`, `windll.kernel32.VirtualAlloc(...)`, `ctypes.pythonapi.*`; function pointers: `CFUNCTYPE / WINFUNCTYPE / PYFUNCTYPE`; raw memory: `memmove`, `memset`, `string_at`, `wstring_at`, `cast`, `<type>.from_address`; `cffi` `FFI().dlopen / verify / memmove` and calls into a `dlopen` result |
+| JavaScript / TypeScript | `process.dlopen`, `process.binding` / `process._linkedBinding` (Node internals; `process.binding("spawn_sync")` spawns without `child_process`), `Deno.dlopen`, `require` / `import` of a `*.node` addon, and calls through `koffi`, `ffi-napi`, `ffi`, `ref-napi`, `bun:ffi`, `bindings`, `node-gyp-build` |
+
+Not reported: `import ctypes` (or `require("koffi")`) on its own, `ctypes`
+types, `sizeof`, `create_string_buffer`, `Structure`, `ctypes.util.find_library`.
+Names are resolved like the other facts (aliases, `from ctypes import CDLL as
+load`, `getattr(ctypes, "CDLL")`, `__import__("ctypes")`); in JavaScript the
+binding of an FFI module is not scope-aware, so a later local variable with the
+same name is still counted. Not covered: Python C extension modules
+(`import _mymodule` from a `.so`), `mmap` with executable pages,
+`sys.modules` / `importlib` loaders, WebAssembly, and native code reached
+through another file.
+
+Bandit has no rule for `ctypes` / `cffi`, so this fact is measured only on the
+labeled cases in `test/native-code.test.js` and `test/fixtures/python-labeled.js`.
 
 ## API
 
@@ -278,10 +307,10 @@ Joins an LLM decision with the IR it was made on:
 ### Field reference
 
 - `world.risk` (from the AST): `critical` for dynamic code, process spawning,
-  `child_process` / `subprocess` or unsafe deserialization; `high` for file deletion; `medium` for file writes, network,
+  `child_process` / `subprocess`, unsafe deserialization or native code; `high` for file deletion; `medium` for file writes, network,
   crypto or secret comparison; otherwise `low`.
 - `forbidden`: dangerous capabilities found in the file (`eval`,
-  `child_process`, `process_spawn`, …).
+  `child_process`, `process_spawn`, `unsafe_deserialization`, `native_code`, …).
 - `mission.objective`: `security_refactor` | `filesystem_simplification` |
   `network_stability` | `stability_repair` | `general_optimization`.
 
@@ -332,6 +361,7 @@ The `risk` field remains a risk estimate, not a guarantee of safety. When
 treated as evidence that the source is safe. Consumers making automated
 decisions should abstain or require additional analysis in this state.
 
-`analysisStatus` (0.1.3) and `language` (0.2.0) are additive fields in the
+`analysisStatus` (0.1.3), `language` (0.2.0) and `operations.nativeCode`
+(0.4.0) are additive fields in the
 public output. Consumers that validate exact object keys may need to account
 for them.
