@@ -438,8 +438,16 @@ function rootModule(q) {
 }
 
 function extract(content) {
-    const facts = emptyFacts();
     const ast = TreeParser.parse(String(content || ""), "python");
+    try {
+        return extractFrom(ast);
+    } finally {
+        TreeParser.release(ast);
+    }
+}
+
+function extractFrom(ast) {
+    const facts = emptyFacts();
 
     if (!ast.ok || !ast.root || ast.metrics?.hasError) {
         facts.error = ast.error || "source did not parse cleanly";

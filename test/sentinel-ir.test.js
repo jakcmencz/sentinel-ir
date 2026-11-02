@@ -212,3 +212,29 @@ test('expandDecision only copies known fields from the decision', () => {
     assert.deepEqual(Object.keys(expanded), ['action', 'patch', 'target', 'objective', 'confidence', 'pressure']);
     assert.equal(expanded.patch, undefined);
 });
+
+test('every parse tree is released after analysis (WebAssembly memory does not leak)', async () => {
+    const TreeParser = require('../src/tree-parser');
+    const parse = TreeParser.parse;
+    const trees = [];
+    TreeParser.parse = function (...a) {
+        const ast = parse.apply(this, a);
+        if (ast.tree) {
+            const del = ast.tree.delete.bind(ast.tree);
+            const entry = { deleted: false };
+            ast.tree.delete = () => { entry.deleted = true; del(); };
+            trees.push(entry);
+        }
+        return ast;
+    };
+    try {
+        for (const [language, source] of [['javascript', 'fetch(x)'], ['typescript', 'let a: number = 1'], ['tsx', 'const a = <b/>'],
+            ['python', 'import os\nos.system(x)'], ['python', 'def (:'], ['javascript', '}}}']]) {
+            await analyzeAsync(source, { language });
+        }
+    } finally {
+        TreeParser.parse = parse;
+    }
+    assert.equal(trees.length, 6);
+    assert.ok(trees.every(t => t.deleted));
+});

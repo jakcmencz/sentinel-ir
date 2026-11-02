@@ -1447,8 +1447,16 @@ function hasParseError(ast) {
 }
 
 function extract(content, language = "javascript") {
-    const facts = emptyFacts();
     const ast = TreeParser.parse(String(content || ""), language);
+    try {
+        return extractFrom(ast);
+    } finally {
+        TreeParser.release(ast);
+    }
+}
+
+function extractFrom(ast) {
+    const facts = emptyFacts();
 
     // A partial parse would report proven absences that are really parser gaps,
     // so anything with an ERROR node is handed back to the text fallback.
