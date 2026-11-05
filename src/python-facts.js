@@ -454,6 +454,7 @@ function extractFrom(ast) {
 
     if (!ast.ok || !ast.root || ast.metrics?.hasError) {
         facts.error = ast.error || "source did not parse cleanly";
+        if (ast.parseError) facts.parseError = ast.parseError;
         return facts;
     }
 

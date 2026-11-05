@@ -284,7 +284,7 @@ function bindingPatternHasName(node, name) {
 
     if (node.type === "identifier" ||
         node.type === "shorthand_property_identifier_pattern") {
-        return text(node) === name;
+        return nameMatches(text(node), name);
     }
 
     // TypeScript parameter: only its pattern declares a binding, not its type
@@ -315,7 +315,7 @@ function bindingPatternHasName(node, name) {
 }
 
 function declarationNameIs(node, name) {
-    return text(field(node, "name")) === name;
+    return nameMatches(text(field(node, "name")), name);
 }
 
 function lexicalDeclarationHasName(node, name) {
@@ -340,7 +340,7 @@ function importStatementHasBinding(statement, name) {
     const requireClause = importRequireClauseOf(statement);
     if (requireClause) {
         const local = (requireClause.namedChildren || []).find(child => child.type === "identifier");
-        return Boolean(local && text(local) === name);
+        return Boolean(local && nameMatches(text(local), name));
     }
 
     const clause = (statement.namedChildren || []).find(
@@ -351,7 +351,7 @@ function importStatementHasBinding(statement, name) {
 
     for (const child of clause.namedChildren || []) {
         // Default import: import Function from "module"
-        if (child.type === "identifier" && text(child) === name) {
+        if (child.type === "identifier" && nameMatches(text(child), name)) {
             return true;
         }
 
@@ -361,7 +361,7 @@ function importStatementHasBinding(statement, name) {
             const local = field(child, "alias") ||
                 children[children.length - 1];
 
-            if (local && text(local) === name) return true;
+            if (local && nameMatches(text(local), name)) return true;
         }
 
         // Named imports: import { run as Function } from "module"
@@ -375,7 +375,7 @@ function importStatementHasBinding(statement, name) {
                         ? children[children.length - 1]
                         : field(specifier, "name") || children[0]);
 
-                if (local && text(local) === name) return true;
+                if (local && nameMatches(text(local), name)) return true;
             }
         }
     }
@@ -383,7 +383,54 @@ function importStatementHasBinding(statement, name) {
     return false;
 }
 
+// `name` is a string, or a callback that is given every candidate name and
+// returns whether it matches.
+function nameMatches(value, name) {
+    return typeof name === "function" ? name(value) : value === name;
+}
+
+// Scope binding checks are pure for a given tree. Each scope's bindings are
+// collected once per analysis; looking up every name with a fresh walk made a
+// large file cost references x scope size.
+let bindingCache = null;
+let parentCache = null;
+
+// tree-sitter finds a node's parent by walking down from the root, so asking
+// for it at every level of deep code is quadratic. Each node's parent is
+// looked up once per analysis.
+function parentOf(node) {
+    if (!node) return null;
+    if (!parentCache) return node.parent || null;
+    const key = `${node.id}:${node.type}:${node.startIndex}:${node.endIndex}`;
+    let hit = parentCache.get(key);
+    if (hit === undefined) {
+        hit = node.parent || null;
+        parentCache.set(key, hit);
+    }
+    return hit;
+}
+
+function cachedBinding(kind, scope, name, scan) {
+    if (!bindingCache || !scope || typeof name !== "string") return scan(scope, name);
+    const key = `${kind}:${scope.type}:${scope.startIndex}:${scope.endIndex}`;
+    let names = bindingCache.get(key);
+    if (!names) {
+        // Same walk as a failed lookup, recording every name it compares.
+        names = new Set();
+        scan(scope, value => {
+            names.add(value);
+            return false;
+        });
+        bindingCache.set(key, names);
+    }
+    return names.has(name);
+}
+
 function lexicalScopeHasBinding(scope, name) {
+    return cachedBinding("lex", scope, name, scannedLexicalScopeHasBinding);
+}
+
+function scannedLexicalScopeHasBinding(scope, name) {
     if (scope.type === "catch_clause") {
         const parameter = field(scope, "parameter") ||
             (scope.namedChildren || []).find(
@@ -433,20 +480,40 @@ function lexicalScopeHasBinding(scope, name) {
 }
 
 function varScopeHasBinding(scope, name) {
+    return cachedBinding("var", scope, name, scannedVarScopeHasBinding);
+}
+
+function scannedVarScopeHasBinding(scope, name) {
+    function declaredWithVar(declarator) {
+        let parent = parentOf(declarator);
+
+        while (parent && parent !== scope) {
+            if (parent.type === "lexical_declaration") return false;
+            if (parent.type === "variable_declaration") return true;
+            parent = parentOf(parent);
+        }
+
+        return false;
+    }
+
     function scan(node) {
         for (const child of node.namedChildren || []) {
             // A nested function has its own var scope.
             if (FUNCTION_SCOPE_TYPES.has(child.type)) continue;
 
             if (child.type === "variable_declarator") {
-                if (bindingPatternHasName(field(child, "name"), name)) {
-                    let parent = child.parent;
-
-                    while (parent && parent !== scope) {
-                        if (parent.type === "lexical_declaration") break;
-                        if (parent.type === "variable_declaration") return true;
-                        parent = parent.parent;
+                if (typeof name === "function") {
+                    const found = [];
+                    bindingPatternHasName(field(child, "name"), value => {
+                        found.push(value);
+                        return false;
+                    });
+                    if (found.length && declaredWithVar(child)) {
+                        if (found.some(value => name(value))) return true;
                     }
+                } else if (bindingPatternHasName(field(child, "name"), name) &&
+                    declaredWithVar(child)) {
+                    return true;
                 }
                 continue;
             }
@@ -461,6 +528,10 @@ function varScopeHasBinding(scope, name) {
 }
 
 function functionScopeHasBinding(scope, name) {
+    return cachedBinding("fun", scope, name, scannedFunctionScopeHasBinding);
+}
+
+function scannedFunctionScopeHasBinding(scope, name) {
     // A method name is a property name, not a lexical binding.
     // Named function declarations and expressions do create bindings.
     if (
@@ -507,7 +578,7 @@ function isNameShadowed(reference, name) {
             return true;
         }
 
-        current = current.parent;
+        current = parentOf(current);
     }
 
     return false;
@@ -609,17 +680,39 @@ function evalAliasTryParts(node) {
 }
 
 function evalAliasFunctionPath(node) {
-    const path = [];
+    return cachedNodePath("fn", node, current =>
+        FUNCTION_SCOPE_TYPES.has(current.type) ? [spawnScopeKey(current)] : []
+    );
+}
+
+// Paths are built from the nearest ancestor whose path is already known, so
+// deep code does not rebuild the same prefix for every node inside it.
+let pathCache = null;
+
+function cachedNodePath(kind, node, step) {
+    const cache = pathCache || new Map();
+    const keyOf = current => `${kind}:${current.id}:${current.type}:${current.startIndex}:${current.endIndex}`;
+    const chain = [];
+    let base = [];
     let current = node;
 
     while (current) {
-        if (FUNCTION_SCOPE_TYPES.has(current.type)) {
-            path.push(spawnScopeKey(current));
+        const hit = cache.get(keyOf(current));
+        if (hit) {
+            base = hit;
+            break;
         }
-        current = current.parent;
+        chain.push(current);
+        current = parentOf(current);
     }
 
-    return path.reverse();
+    let path = base;
+    for (let i = chain.length - 1; i >= 0; i--) {
+        path = path.concat(step(chain[i], parentOf(chain[i])));
+        cache.set(keyOf(chain[i]), path);
+    }
+
+    return path;
 }
 
 function evalAliasSameFunctionContext(a, b) {
@@ -631,19 +724,10 @@ function evalAliasSameFunctionContext(a, b) {
 }
 
 function evalAliasExecutionPath(node) {
-    const path = [];
-    let child = node;
-    let current = node;
+    return cachedNodePath("exec", node, (child, parent) => {
+        const path = [];
 
-    while (current) {
-        if (FUNCTION_SCOPE_TYPES.has(current.type)) {
-            path.push(`fn:${spawnScopeKey(current)}`);
-        }
-
-        const parent = current.parent;
-        if (!parent) break;
-
-        if (parent.type === "if_statement") {
+        if (parent && parent.type === "if_statement") {
             const parts = evalAliasIfParts(parent);
 
             if (
@@ -660,6 +744,7 @@ function evalAliasExecutionPath(node) {
                 path.push(`if:${spawnScopeKey(parent)}:then`);
             }
         } else if (
+            parent &&
             parent.type === "switch_body" &&
             (child.type === "switch_case" ||
              child.type === "switch_default")
@@ -667,13 +752,13 @@ function evalAliasExecutionPath(node) {
             path.push(
                 `switch:${spawnScopeKey(parent)}:case:${child.startIndex}`
             );
-        } else if (parent.type === "try_statement") {
+        } else if (parent && parent.type === "try_statement") {
             const branch =
                 child.type === "catch_clause" ? "catch" :
                 child.type === "finally_clause" ? "finally" : "try";
 
             path.push(`try:${spawnScopeKey(parent)}:${branch}`);
-        } else if (EVAL_ALIAS_LOOP_TYPES.has(parent.type)) {
+        } else if (parent && EVAL_ALIAS_LOOP_TYPES.has(parent.type)) {
             const body = evalAliasLoopBody(parent);
 
             if (
@@ -685,11 +770,12 @@ function evalAliasExecutionPath(node) {
             }
         }
 
-        child = parent;
-        current = parent;
-    }
+        if (FUNCTION_SCOPE_TYPES.has(child.type)) {
+            path.push(`fn:${spawnScopeKey(child)}`);
+        }
 
-    return path.reverse();
+        return path;
+    });
 }
 
 function evalAliasPathIsVisible(eventPath, referencePath) {
@@ -712,7 +798,7 @@ function evalAliasEnclosingSwitchCase(node) {
         }
 
         if (current.type === "switch_statement") return null;
-        current = current.parent;
+        current = parentOf(current);
     }
 
     return null;
@@ -724,13 +810,13 @@ function evalAliasTopLevelChild(node, ancestor) {
 
     while (
         current &&
-        current.parent &&
-        !evalAliasSameNode(current.parent, ancestor)
+        parentOf(current) &&
+        !evalAliasSameNode(parentOf(current), ancestor)
     ) {
-        current = current.parent;
+        current = parentOf(current);
     }
 
-    return current && evalAliasSameNode(current.parent, ancestor)
+    return current && evalAliasSameNode(parentOf(current), ancestor)
         ? current
         : null;
 }
@@ -764,11 +850,11 @@ function evalAliasSwitchFallthroughVisible(eventNode, reference) {
         return false;
     }
 
-    const body = sourceCase.parent;
+    const body = parentOf(sourceCase);
 
     if (
         !body ||
-        !evalAliasSameNode(body, targetCase.parent) ||
+        !evalAliasSameNode(body, parentOf(targetCase)) ||
         body.type !== "switch_body"
     ) {
         return false;
@@ -816,7 +902,7 @@ function evalAliasEnclosingTryStatement(node) {
 
     while (current) {
         if (current.type === "try_statement") return current;
-        current = current.parent;
+        current = parentOf(current);
     }
 
     return null;
@@ -925,17 +1011,26 @@ function evalAliasStateAtOffset(aliases, key, offset, reference) {
 
     const events = aliases.get(key) || [];
     const referencePath = evalAliasExecutionPath(reference);
-    let state = false;
 
-    for (const event of events) {
-        if (event.offset >= offset) break;
+    // Events are appended in offset order. The state is set by the last
+    // visible event before `offset`, so search backwards from there instead
+    // of replaying every earlier write to the same name.
+    let low = 0;
+    let high = events.length;
 
-        if (evalAliasEventVisible(event, reference, referencePath)) {
-            state = event.isAlias;
+    while (low < high) {
+        const mid = (low + high) >> 1;
+        if (events[mid].offset < offset) low = mid + 1;
+        else high = mid;
+    }
+
+    for (let i = low - 1; i >= 0; i--) {
+        if (evalAliasEventVisible(events[i], reference, referencePath)) {
+            return events[i].isAlias;
         }
     }
 
-    return state;
+    return false;
 }
 
 function evalAliasStateAt(aliases, key, reference) {
@@ -986,9 +1081,9 @@ function evalAliasFunctionBinding(node) {
 
         if (!nameNode || nameNode.type !== "identifier") return null;
 
-        scope = spawnNearestBindingScope(node.parent, text(nameNode));
+        scope = spawnNearestBindingScope(parentOf(node), text(nameNode));
     } else {
-        const parent = node.parent;
+        const parent = parentOf(node);
 
         if (
             parent?.type === "variable_declarator" &&
@@ -1022,7 +1117,7 @@ function evalAliasEnclosingFunction(node) {
 
     while (current) {
         if (FUNCTION_SCOPE_TYPES.has(current.type)) return current;
-        current = current.parent;
+        current = parentOf(current);
     }
 
     return null;
@@ -1073,14 +1168,44 @@ function evalAliasAppendEvent(aliases, key, event) {
         aliases.set(key, events);
     }
 
+    // Tasks run in offset order, so events stay sorted by offset;
+    // evalAliasStateAtOffset relies on that.
     events.push(event);
 }
 
-function evalAliasControlKeys(task, writes) {
+// Writes sorted by start offset, so each control statement only looks at the
+// writes inside it instead of every write in the file.
+function evalAliasWritesByStart(writes) {
+    return writes
+        .map((write, index) => ({ write, index, start: write.node.startIndex }))
+        .sort((a, b) => a.start - b.start || a.index - b.index);
+}
+
+function evalAliasWritesWithin(node, writesByStart) {
+    let low = 0;
+    let high = writesByStart.length;
+
+    while (low < high) {
+        const mid = (low + high) >> 1;
+        if (writesByStart[mid].start < node.startIndex) low = mid + 1;
+        else high = mid;
+    }
+
+    const inside = [];
+    for (let i = low; i < writesByStart.length && writesByStart[i].start <= node.endIndex; i++) {
+        inside.push(writesByStart[i]);
+    }
+
+    return inside
+        .sort((a, b) => a.index - b.index)
+        .map(entry => entry.write);
+}
+
+function evalAliasControlKeys(task, writesByStart) {
     const node = task.node;
 
     return [...new Set(
-        writes
+        evalAliasWritesWithin(node, writesByStart)
             .filter(write =>
                 write.node.startIndex >= node.startIndex &&
                 write.node.endIndex <= node.endIndex &&
@@ -1332,6 +1457,7 @@ function evalAliasBindingsOf(root) {
     );
 
     const aliases = new Map();
+    const writesByStart = evalAliasWritesByStart(writes);
 
     for (const task of tasks) {
         if (task.kind === "write") {
@@ -1352,7 +1478,7 @@ function evalAliasBindingsOf(root) {
 
         const contextPath = evalAliasExecutionPath(task.node);
 
-        for (const key of evalAliasControlKeys(task, writes)) {
+        for (const key of evalAliasControlKeys(task, writesByStart)) {
             const isAlias = evalAliasControlResult(task, key, aliases);
 
             evalAliasAppendEvent(aliases, key, {
@@ -1456,12 +1582,25 @@ function extract(content, language = "javascript") {
 }
 
 function extractFrom(ast) {
+    const outer = [bindingCache, parentCache, pathCache];
+    bindingCache = new Map();
+    parentCache = new Map();
+    pathCache = new Map();
+    try {
+        return extractFromTree(ast);
+    } finally {
+        [bindingCache, parentCache, pathCache] = outer;
+    }
+}
+
+function extractFromTree(ast) {
     const facts = emptyFacts();
 
     // A partial parse would report proven absences that are really parser gaps,
     // so anything with an ERROR node is handed back to the text fallback.
     if (!ast.ok || !ast.root || hasParseError(ast)) {
         facts.error = ast.error || "source did not parse cleanly";
+        if (ast.parseError) facts.parseError = ast.parseError;
         return facts;
     }
 
@@ -1631,7 +1770,7 @@ function spawnNearestBindingScope(reference, name) {
             return current;
         }
 
-        current = current.parent;
+        current = parentOf(current);
     }
 
     return null;
@@ -1669,8 +1808,8 @@ function spawnBindingsOf(root) {
     };
 
     function declarationScopeOf(declarator) {
-        const isVar = declarator.parent?.type === "variable_declaration";
-        let current = declarator.parent?.parent;
+        const isVar = parentOf(declarator)?.type === "variable_declaration";
+        let current = parentOf(parentOf(declarator));
 
         while (current) {
             if (current.type === "program") return current;
@@ -1681,19 +1820,19 @@ function spawnBindingsOf(root) {
                 return current;
             }
 
-            current = current.parent;
+            current = parentOf(current);
         }
 
         return root;
     }
 
     function importScopeOf(node) {
-        let current = node.parent;
+        let current = parentOf(node);
 
         while (current) {
             if (current.type === "program") return current;
             if (LEXICAL_SCOPE_TYPES.has(current.type)) return current;
-            current = current.parent;
+            current = parentOf(current);
         }
 
         return root;
@@ -2248,7 +2387,7 @@ function rootIdentifierOf(node) {
 // A binding between the reference and the scope that declared the native name
 // (function f(koffi) { koffi.load() }) means it is a different value.
 function shadowedNative(reference, name, declaration) {
-    for (let current = reference?.parent; current && current.type !== "program"; current = current.parent) {
+    for (let current = parentOf(reference); current && current.type !== "program"; current = parentOf(current)) {
         const scoped = (FUNCTION_SCOPE_TYPES.has(current.type) && functionScopeHasBinding(current, name)) ||
             (LEXICAL_SCOPE_TYPES.has(current.type) && lexicalScopeHasBinding(current, name));
         if (!scoped) continue;
@@ -2385,7 +2524,7 @@ function visitNativeReference(node, { facts, calls, signal, nativeBindings }) {
         ? !shadowedNative(root, object, nativeBindings.declarations.get(object))
         : PROCESS_OBJECTS.has(object) && !nativeBindings.has("process") && !isNameShadowed(root, "process");
     if (!isProcess) return;
-    const parent = node.parent;
+    const parent = parentOf(node);
     // (0, process.dlopen)(...) is an indirect call.
     const used = parent?.type === "arguments" || parent?.type === "sequence_expression" ||
         (parent?.type === "variable_declarator" && sameNode(field(parent, "value"), node)) ||

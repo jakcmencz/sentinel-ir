@@ -245,7 +245,8 @@ function summarize(content = "", facts = null) {
 // a missing key is a proven absence rather than a gap in the IR.
 function compressFacts(facts) {
     if (!facts?.ast) {
-        return { ast: false, reason: facts?.error || "source did not parse; IR fell back to text heuristics" };
+        const reason = facts?.error || "source did not parse; IR fell back to text heuristics";
+        return facts?.parseError ? { ast: false, reason, parseError: facts.parseError } : { ast: false, reason };
     }
 
     const compressed = { ast: true };
