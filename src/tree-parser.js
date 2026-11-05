@@ -171,7 +171,8 @@ const TreeParser = {
                 metrics: {
                     ...this.getMetrics(root),
                     hasError
-                }
+                },
+                ...(hasError ? { parseError: this.firstError(root) } : {})
             };
         } catch (error) {
             return {
@@ -187,6 +188,37 @@ const TreeParser = {
                 error: error.message
             };
         }
+    },
+
+    // Position of the first ERROR or MISSING node. No source text is copied:
+    // it is untrusted and goes straight into the IR.
+    firstError(root) {
+        const flag = (node, key) => typeof node[key] === "function"
+            ? Boolean(node[key]())
+            : Boolean(node[key]);
+        const at = (node, kind) => ({
+            line: node.startPosition.row + 1,
+            column: node.startPosition.column + 1,
+            kind,
+            ...(kind === "missing" ? { expected: node.type } : {})
+        });
+
+        let current = root;
+        while (current) {
+            if (flag(current, "isMissing")) return at(current, "missing");
+            if (current.type === "ERROR") return at(current, "unexpected");
+
+            let next = null;
+            for (const child of current.children || []) {
+                if (flag(child, "isMissing") || child.type === "ERROR" || flag(child, "hasError")) {
+                    next = child;
+                    break;
+                }
+            }
+            if (!next) return at(current, "unexpected");
+            current = next;
+        }
+        return null;
     },
 
     extractNodes(node, result = []) {

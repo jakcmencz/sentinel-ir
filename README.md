@@ -312,7 +312,7 @@ The compact projection meant for the prompt. `facts` is `compressFacts(ir.facts)
 
 Keeps only enabled operations and non-empty categories, and renders risk
 signals as `signal:evidence@line`. For source that did not parse it returns
-`{ ast: false, reason }`.
+`{ ast: false, reason }`, plus `parseError` when the parser located an error.
 
 ### `expandDecision(decision, ir)`
 
@@ -377,7 +377,16 @@ The `risk` field remains a risk estimate, not a guarantee of safety. When
 treated as evidence that the source is safe. Consumers making automated
 decisions should abstain or require additional analysis in this state.
 
-`analysisStatus` (0.1.3), `language` (0.2.0) and `operations.nativeCode`
-(0.4.0) are additive fields in the
+Since 0.4.3, when the source parsed with syntax errors, `facts.parseError`
+gives where the first error region starts, for example
+`{ "line": 42, "column": 1, "kind": "missing", "expected": "}" }`.
+`kind` is `missing` (the parser expected a token that is absent; `expected`
+names it) or `unexpected` (the parser could not use the text at that
+position). It never contains source text. It does not say whether the code
+is wrong or uses syntax the grammar does not support, for example TypeScript
+`export type *` or variance annotations such as `in T`.
+
+`analysisStatus` (0.1.3), `language` (0.2.0), `operations.nativeCode`
+(0.4.0) and `parseError` (0.4.3) are additive fields in the
 public output. Consumers that validate exact object keys may need to account
 for them.
