@@ -59,6 +59,14 @@ const SPAWN_MODULES = new Set([
     "child_process", "node:child_process", "cross-spawn", "execa", "shelljs", "zx"
 ]);
 
+const FS_MODULES = new Set(["fs", "node:fs", "fs/promises", "node:fs/promises"]);
+const FS_BINDING_SPEC = {
+    modules: FS_MODULES,
+    functions: new Set([...FS_WRITE, ...FS_DELETE, ...FS_READ]),
+    submodules: new Set(["promises"])
+};
+const SPAWN_BINDING_SPEC = { modules: SPAWN_MODULES, functions: SPAWN_FUNCTIONS, submodules: new Set() };
+
 const CHILD_PROCESS_MODULES = new Set(["child_process", "node:child_process"]);
 
 // Modules whose exports load or call native code: FFI, raw memory, .node addon loaders.
@@ -1607,6 +1615,7 @@ function extractFromTree(ast) {
     facts.ast = true;
 
     const spawnBindings = spawnBindingsOf(ast.root);
+    const fsBindings = spawnBindingsOf(ast.root, FS_BINDING_SPEC);
     const nativeBindings = nativeBindingsOf(ast.root);
     const evalAliases = evalAliasBindingsOf(ast.root);
     const routes = new Set();
@@ -1623,7 +1632,7 @@ function extractFromTree(ast) {
     walkRuntime(ast.root, node => {
         switch (node.type) {
             case "call_expression":
-                visitCall(node, { facts, routes, imports, calls, signal, spawnBindings, evalAliases, nativeBindings });
+                visitCall(node, { facts, routes, imports, calls, signal, spawnBindings, fsBindings, evalAliases, nativeBindings });
                 break;
             case "new_expression": {
                 const constructor = field(node, "constructor");
@@ -1787,11 +1796,27 @@ function spawnResolvesBinding(reference, name, kind, bindings) {
     return Boolean(scoped.get(spawnScopeKey(scope))?.has(name));
 }
 
-function spawnBindingsOf(root) {
+// Also used for fs (FS_BINDING_SPEC); `origins` maps a bound function to the
+// module export it came from, so `const { unlinkSync: del } = ...` reads as unlinkSync.
+function spawnBindingsOf(root, spec = SPAWN_BINDING_SPEC) {
     const modules = new Set();
     const functions = new Set();
     const moduleScopes = new Map();
     const functionScopes = new Map();
+    const origins = new Map();
+    const setOrigin = (scope, name, origin) => {
+        if (scope && name && origin) origins.set(`${spawnScopeKey(scope)}|${name}`, origin);
+    };
+    const bindModule = (scope, name) => {
+        modules.add(name);
+        return addScoped(moduleScopes, scope, name);
+    };
+    const bindFunction = (scope, name, origin) => {
+        if (spec.submodules.has(origin)) return bindModule(scope, name);
+        functions.add(name);
+        setOrigin(scope, name, origin);
+        return addScoped(functionScopes, scope, name);
+    };
 
     const addScoped = (map, scope, name) => {
         if (!scope || !name) return false;
@@ -1839,34 +1864,36 @@ function spawnBindingsOf(root) {
     }
 
     const bindNames = (target, source, scope) => {
-        if (!target || !SPAWN_MODULES.has(source)) return;
+        if (!target || !spec.modules.has(source)) return;
 
         if (target.type === "identifier") {
-            const name = text(target);
-            modules.add(name);
-            addScoped(moduleScopes, scope, name);
+            bindModule(scope, text(target));
             return;
         }
 
         walk(target, node => {
             if (node.type === "shorthand_property_identifier_pattern") {
                 const name = text(node);
-                functions.add(name);
-                addScoped(functionScopes, scope, name);
+                bindFunction(scope, name, name);
             }
 
             if (node.type === "pair_pattern") {
                 const children = node.namedChildren || [];
                 const value = children[children.length - 1];
+                const key = field(node, "key") || children[0];
+                const origin = key?.type === "string" ? stringLiteral(key) : key ? text(key) : null;
 
                 if (value?.type === "identifier") {
-                    const name = text(value);
-                    functions.add(name);
-                    addScoped(functionScopes, scope, name);
+                    bindFunction(scope, text(value), origin);
                 }
             }
         });
     };
+
+    // `require("fs").promises` / `(await import("fs")).promises`
+    const inlineSubmodule = (value) => value?.type === "member_expression" &&
+        spec.submodules.has(text(field(value, "property"))) &&
+        spec.modules.has(inlineModuleSource(field(value, "object")));
 
     // First pass: preserve existing require/import/destructuring support.
     walk(root, node => {
@@ -1889,6 +1916,8 @@ function spawnBindingsOf(root) {
                         declarationScopeOf(node)
                     );
                 }
+            } else if (inlineSubmodule(value) && field(node, "name")?.type === "identifier") {
+                bindModule(declarationScopeOf(node), text(field(node, "name")));
             }
 
             return;
@@ -1899,29 +1928,25 @@ function spawnBindingsOf(root) {
 
             const requireClause = importRequireClauseOf(node);
             const source = stringLiteral(field(requireClause || node, "source"));
-            if (!source || !SPAWN_MODULES.has(source)) return;
+            if (!source || !spec.modules.has(source)) return;
 
             const scope = importScopeOf(node);
 
             if (requireClause) {
                 const local = (requireClause.namedChildren || []).find(child => child.type === "identifier");
-                if (local) {
-                    modules.add(text(local));
-                    addScoped(moduleScopes, scope, text(local));
-                }
+                if (local) bindModule(scope, text(local));
                 return;
             }
 
             walk(node, child => {
                 if (child.type === "import_specifier") {
                     if (isTypeOnlySpecifier(child)) return;
-                    const local = field(child, "alias") ||
-                        field(child, "name");
+                    const imported = field(child, "name");
+                    const local = field(child, "alias") || imported;
 
                     if (local) {
-                        const name = text(local);
-                        functions.add(name);
-                        addScoped(functionScopes, scope, name);
+                        const origin = imported?.type === "string" ? stringLiteral(imported) : text(imported);
+                        bindFunction(scope, text(local), origin);
                     }
                 } else if (
                     child.type === "namespace_import" ||
@@ -1930,11 +1955,7 @@ function spawnBindingsOf(root) {
                     const local = field(child, "name") ||
                         (child.namedChildren || [])[0];
 
-                    if (local?.type === "identifier") {
-                        const name = text(local);
-                        modules.add(name);
-                        addScoped(moduleScopes, scope, name);
-                    }
+                    if (local?.type === "identifier") bindModule(scope, text(local));
                 }
             });
         }
@@ -1989,19 +2010,20 @@ function spawnBindingsOf(root) {
                         ? stringLiteral(propertyNode)
                         : propertyNode ? text(propertyNode) : null;
 
-                if (
-                    receiver &&
-                    SPAWN_FUNCTIONS.has(property) &&
+                const fromModule = receiver &&
                     spawnResolvesBinding(
                         receiver, text(receiver), "modules",
                         { moduleScopes, functionScopes }
-                    )
-                ) {
-                    functions.add(name);
-
-                    if (addScoped(functionScopes, scope, name)) {
-                        changed = true;
-                    }
+                    );
+                const fromInline = !receiver && value.type === "member_expression" &&
+                    spec.modules.has(inlineModuleSource(field(value, "object")));
+                if (fromInline && spec.functions.has(property)) {
+                    if (bindFunction(scope, name, property)) changed = true;
+                } else if (fromModule && spec.submodules.has(property) && value.type === "member_expression" &&
+                    receiver === unwrapTypeOnly(field(value, "object"))) {
+                    if (bindModule(scope, name)) changed = true;
+                } else if (fromModule && spec.functions.has(property)) {
+                    if (bindFunction(scope, name, property)) changed = true;
                 }
             } else if (value.type === "identifier") {
                 const sourceName = text(value);
@@ -2010,25 +2032,50 @@ function spawnBindingsOf(root) {
                 if (spawnResolvesBinding(
                     value, sourceName, "modules", bindings
                 )) {
-                    modules.add(name);
-
-                    if (addScoped(moduleScopes, scope, name)) {
-                        changed = true;
-                    }
+                    if (bindModule(scope, name)) changed = true;
                 } else if (spawnResolvesBinding(
                     value, sourceName, "functions", bindings
                 )) {
-                    functions.add(name);
-
-                    if (addScoped(functionScopes, scope, name)) {
-                        changed = true;
-                    }
+                    const from = spawnNearestBindingScope(value, sourceName);
+                    if (bindFunction(scope, name, origins.get(`${spawnScopeKey(from)}|${sourceName}`))) changed = true;
                 }
             }
         }
     }
 
-    return { modules, functions, moduleScopes, functionScopes };
+    return { modules, functions, moduleScopes, functionScopes, origins };
+}
+
+// The module a `require("m")` / `import("m")` / `(await import("m"))` expression loads.
+function inlineModuleSource(node) {
+    let base = unwrapTypeOnly(node);
+    for (let i = 0; i < 8 && base; i++) {
+        if (base.type === "parenthesized_expression") base = unwrapTypeOnly((base.namedChildren || [])[0]);
+        else if (base.type === "await_expression") base = unwrapTypeOnly(field(base, "argument") || (base.namedChildren || [])[0]);
+        else break;
+    }
+    if (base?.type !== "call_expression") return null;
+    const { object, property } = callTarget(base);
+    if (object || (property !== "require" && property !== "import")) return null;
+    return stringLiteral(args(base)[0]);
+}
+
+// The fs method a call reaches, or null: fs.x(), fsp.x(), a bound fs module
+// (files.x(), require("fs").x(), w.x() with w = require("fs").promises) or a
+// bound fs function (writeFileSync(), del() from { unlinkSync: del }).
+function fsMethodOf(callee, { object, property }, host, fsBindings) {
+    if (object) {
+        if (host === "fs" || host === "fsp" || host === "fileSystem") return property;
+        let base = unwrapTypeOnly(field(callee, "object"));
+        while (base?.type === "member_expression") base = unwrapTypeOnly(field(base, "object"));
+        if (base?.type === "identifier") {
+            return spawnResolvesBinding(base, text(base), "modules", fsBindings) ? property : null;
+        }
+        return FS_MODULES.has(inlineModuleSource(base)) ? property : null;
+    }
+    if (callee?.type !== "identifier" || !spawnResolvesBinding(callee, property, "functions", fsBindings)) return null;
+    const scope = spawnNearestBindingScope(callee, property);
+    return fsBindings.origins.get(`${spawnScopeKey(scope)}|${property}`) || null;
 }
 
 function isSpawnCall({ object, property, raw, callee }, host, spawnBindings) {
@@ -2067,7 +2114,7 @@ function isSpawnCall({ object, property, raw, callee }, host, spawnBindings) {
 
     return !SPAWN_ONLY_WHEN_BOUND.has(property);
 }
-function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings, evalAliases, nativeBindings }) {
+function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings, fsBindings, evalAliases, nativeBindings }) {
     const callee = unwrapTypeOnly(field(node, "function") || (node.namedChildren || [])[0]);
     const { object, property, raw } = callTarget(node);
     const sequence = callee?.type === "parenthesized_expression"
@@ -2151,16 +2198,17 @@ function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings,
     }
 
     // Filesystem, classified by the method that is actually called
-    if (object && (host === "fs" || host === "fsp" || host === "fileSystem")) {
-        const name = `${object}.${property}`;
+    const fsMethod = fsMethodOf(callee, { object, property }, host, fsBindings);
+    if (fsMethod) {
+        const name = object ? `${object}.${property}` : String(property);
         calls.filesystem.add(name);
-        if (FS_DELETE.has(property)) {
+        if (FS_DELETE.has(fsMethod)) {
             facts.operations.diskDelete = true;
             signal("destructive_fs", name, node);
-        } else if (FS_WRITE.has(property)) {
+        } else if (FS_WRITE.has(fsMethod)) {
             facts.operations.diskWrite = true;
             signal("disk_write", name, node);
-        } else if (FS_READ.has(property)) {
+        } else if (FS_READ.has(fsMethod)) {
             facts.operations.diskRead = true;
         }
         return;

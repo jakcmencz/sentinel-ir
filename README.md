@@ -336,6 +336,13 @@ Joins an LLM decision with the IR it was made on:
   combined.
 - Facts are syntactic. Aliases the AST cannot resolve (values passed through
   other modules, computed property names) are not followed.
+- Since 0.4.4, `fs` calls are recognised through any local name bound in the
+  same file: `require("fs").writeFileSync(...)`, `const files = require("fs")`,
+  `const { unlinkSync: del } = require("fs")`, `import { writeFile } from "fs/promises"`,
+  `require("fs").promises`. A local variable or parameter that shadows the name
+  is not counted. Values passed through callbacks
+  (`import("fs").then(m => m.writeFileSync(...))`) and wrapper packages such as
+  `fs-extra` are not followed.
 - The text fallback for unparseable source is a substring heuristic and can be
   wrong in both directions; it is marked `facts.ast: false`.
 

@@ -171,7 +171,7 @@ function inferRisk(filePath, content = "", facts = null) {
         return "medium";
     }
 
-    if (lower.includes("writefile") || lower.includes("unlink")) {
+    if (FS_WRITE_TEXT.test(lower)) {
         return "high";
     }
 
@@ -181,6 +181,9 @@ function inferRisk(filePath, content = "", facts = null) {
 
     return "low";
 }
+
+// Text fallback for filesystem writes and deletes (lower-cased source).
+const FS_WRITE_TEXT = /writefile|unlink|appendfile|createwritestream|copyfile|\b(rmsync|rmdir|rmdirsync|truncatesync|renamesync|symlinksync)\b|\bfs\w*(\s*\.\s*promises)?\s*\.\s*(rm|rename|truncate)\s*\(/;
 
 // Text-fallback counterpart of the native_code fact (lower-cased source).
 // Unparseable code: any trace of a native loader or FFI module counts, since an
