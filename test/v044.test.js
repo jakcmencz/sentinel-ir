@@ -93,3 +93,125 @@ test('child_process bindings are unchanged by the shared binding walker', () => 
   assert.equal(analyze('const { writeFileSync: run } = require("fs");\nrun(cmd);').risk, 'medium');
   assert.equal(analyze('const { exec } = require("fs");\nexec(cmd);').risk, 'low');
 });
+
+const netPositive = [
+  ['inline require axios', 'require("axios").get(u);', 'outbound_http:require("axios").get@1'],
+  ['renamed https', 'const net = require("https");\nnet.get(u);', 'outbound_http:net.get@2'],
+  ['namespace node:https', 'import * as h from "node:https";\nh.request(u);', 'outbound_http:h.request@2'],
+  ['undici named', 'import { request } from "undici";\nawait request(u);', 'outbound_http:request@2'],
+  ['undici fetch alias', 'import { fetch as f } from "undici";\nawait f(u);', 'outbound_http:f@2'],
+  ['got default call', 'import got from "got";\nawait got(u);', 'outbound_http:got@2'],
+  ['inline got call', 'require("got")(u);', 'outbound_http:require("got")@1'],
+  ['node-fetch renamed', 'const nf = require("node-fetch");\nnf(u);', 'outbound_http:nf@2'],
+  ['axios.create instance', 'const axios = require("axios");\nconst api = axios.create({});\napi.post(u);', 'outbound_http:api.post@3'],
+  ['axios default export', 'const ax = require("axios").default;\nax.get(u);', 'outbound_http:ax.get@2'],
+  ['http2.connect', 'const h2 = require("http2");\nh2.connect(u);', 'outbound_http:h2.connect@2'],
+  ['destructured alias', 'const { get: g } = require("https");\ng(u);', 'outbound_http:g@2'],
+  ['then callback', 'import("https").then(h => h.get(u));', 'outbound_http:h.get@1']
+];
+
+for (const [name, code, signal] of netPositive) {
+  test(`network module binding: ${name}`, () => {
+    const ir = analyze(code);
+    assert.equal(ir.analysisStatus, 'complete');
+    assert.equal(ir.risk, 'medium');
+    assert.equal(ir.facts.operations.outboundHttp, true);
+    assert.deepEqual(signals(ir), [signal]);
+  });
+}
+
+const netNegative = [
+  ['parameter shadows module', 'const net = require("https");\nfunction f(net) { net.get(u); }'],
+  ['unrelated module get', 'const cache = require("./cache");\ncache.get(k);'],
+  ['http constants', 'const h = require("http");\nh.METHODS.includes(m);\nconst x = h.STATUS_CODES[200];'],
+  ['Map.get', 'const m = new Map();\nm.get(k);'],
+  ['axios interceptors', 'const ax = require("axios");\nax.interceptors.request.use(f);'],
+  ['non-http package named like a method', 'const { get } = require("lodash");\nget(o, "a");']
+];
+
+for (const [name, code] of netNegative) {
+  test(`network module binding stays low: ${name}`, () => {
+    const ir = analyze(code);
+    assert.equal(ir.analysisStatus, 'complete');
+    assert.equal(ir.risk, 'low');
+    assert.deepEqual(ir.facts.riskSignals, []);
+  });
+}
+
+test('TypeScript network bindings', () => {
+  assert.equal(analyze('import net = require("https");\nnet.get(u as string);', 'a.ts').risk, 'medium');
+  assert.equal(analyze('import type { AxiosInstance } from "axios";\ndeclare const api: AxiosInstance;\napi.get(u);', 'a.ts').risk, 'low');
+});
+
+const fsExtra = [
+  ['remove', 'const fse = require("fs-extra");\nawait fse.remove(p);', 'high', 'destructive_fs:fse.remove@2'],
+  ['emptyDirSync via fs name', 'const fs = require("fs-extra");\nfs.emptyDirSync(p);', 'high', 'destructive_fs:fs.emptyDirSync@2'],
+  ['named outputFile', 'import { outputFile } from "fs-extra";\nawait outputFile(p, d);', 'medium', 'disk_write:outputFile@2'],
+  ['writeJson', 'const fse = require("fs-extra");\nfse.writeJsonSync(p, o);', 'medium', 'disk_write:fse.writeJsonSync@2'],
+  ['move', 'import fse from "fs-extra";\nawait fse.move(a, b);', 'medium', 'disk_write:fse.move@2']
+];
+
+for (const [name, code, risk, signal] of fsExtra) {
+  test(`fs-extra: ${name}`, () => {
+    const ir = analyze(code);
+    assert.equal(ir.risk, risk);
+    assert.deepEqual(signals(ir), [signal]);
+  });
+}
+
+test('fs-extra reads stay low', () => {
+  const ir = analyze('const fse = require("fs-extra");\nfse.readJsonSync(p);\nfse.pathExistsSync(p);');
+  assert.equal(ir.risk, 'low');
+  assert.equal(ir.facts.operations.diskRead, true);
+});
+
+const thenPositive = [
+  ['arrow param', 'import("fs").then(m => m.writeFileSync(p));', 'medium', 'disk_write:m.writeFileSync@1'],
+  ['destructured param', 'import("node:fs").then(({ rmSync }) => rmSync(p));', 'high', 'destructive_fs:rmSync@1'],
+  ['function expression', 'import("fs").then(function (m) {\n  m.unlinkSync(p);\n});', 'high', 'destructive_fs:m.unlinkSync@2'],
+  ['promises submodule', 'import("fs").then(({ promises }) => promises.rm(p));', 'high', 'destructive_fs:promises.rm@1']
+];
+
+for (const [name, code, risk, signal] of thenPositive) {
+  test(`import().then callback: ${name}`, () => {
+    const ir = analyze(code);
+    assert.equal(ir.risk, risk);
+    assert.deepEqual(signals(ir), [signal]);
+    assert.ok(!ir.facts.calls.filesystem.some(c => c.endsWith('.then')));
+  });
+}
+
+test('import().then callback: TypeScript and child_process', () => {
+  assert.equal(analyze('import("fs").then((m: any) => m.writeFileSync(p));', 'a.ts').risk, 'medium');
+  assert.deepEqual(signals(analyze('import("child_process").then(cp => cp.exec(c));')),
+    ['child_process_import:import(child_process)@1', 'process_spawn:cp.exec@1']);
+});
+
+test('import().then callback stays low when the module or binding does not match', () => {
+  for (const code of [
+    'import("./db").then(m => m.writeFileSync(p));',
+    'import("fs").then(m => { function g(m) { m.rmSync(p); } });',
+    'import("fs").then(handler);',
+    'load("fs").then(m => m.rmSync(p));'
+  ]) {
+    const ir = analyze(code);
+    assert.equal(ir.risk, 'low', code);
+    assert.deepEqual(ir.facts.riskSignals, [], code);
+  }
+});
+
+test('text fallback flags fs-extra deletes and HTTP module loads in unparseable code', () => {
+  for (const [code, risk] of [
+    ['const fse = require("fs-extra");\nfse.removeSync(p);\nif (', 'high'],
+    ['fse.emptyDir(p);\nif (', 'high'],
+    ['fs.remove(p);\nif (', 'high'],
+    ['const net = require("https");\nnet.get(u);\nif (', 'medium'],
+    ['import got from "got";\nif (', 'medium'],
+    ['const x = list.remove(i);\nif (', 'low'],
+    ['const x = require("httpx-lite");\nif (', 'low']
+  ]) {
+    const ir = analyze(code, 'a.js');
+    assert.equal(ir.analysisStatus, 'incomplete');
+    assert.equal(ir.risk, risk, code);
+  }
+});

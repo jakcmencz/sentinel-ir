@@ -31,14 +31,24 @@ const ROUTE_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", 
 const FS_WRITE = new Set([
     "writeFile", "writeFileSync", "appendFile", "appendFileSync", "mkdir", "mkdirSync",
     "copyFile", "copyFileSync", "rename", "renameSync", "createWriteStream", "write",
-    "writeSync", "chmod", "chmodSync", "symlink", "symlinkSync"
+    "writeSync", "chmod", "chmodSync", "symlink", "symlinkSync",
+    // fs-extra
+    "outputFile", "outputFileSync", "outputJson", "outputJsonSync", "outputJSON", "outputJSONSync",
+    "writeJson", "writeJsonSync", "writeJSON", "writeJSONSync", "copy", "copySync", "move", "moveSync",
+    "ensureDir", "ensureDirSync", "mkdirs", "mkdirsSync", "mkdirp", "mkdirpSync", "ensureFile",
+    "ensureFileSync", "createFile", "createFileSync", "ensureLink", "ensureLinkSync",
+    "ensureSymlink", "ensureSymlinkSync"
 ]);
 const FS_DELETE = new Set([
-    "rm", "rmSync", "rmdir", "rmdirSync", "unlink", "unlinkSync", "truncate", "truncateSync"
+    "rm", "rmSync", "rmdir", "rmdirSync", "unlink", "unlinkSync", "truncate", "truncateSync",
+    // fs-extra
+    "remove", "removeSync", "emptyDir", "emptyDirSync", "emptydir", "emptydirSync"
 ]);
 const FS_READ = new Set([
     "readFile", "readFileSync", "readdir", "readdirSync", "existsSync", "stat", "statSync",
-    "createReadStream", "realpathSync", "access", "accessSync"
+    "createReadStream", "realpathSync", "access", "accessSync",
+    // fs-extra
+    "readJson", "readJsonSync", "readJSON", "readJSONSync", "pathExists", "pathExistsSync"
 ]);
 
 const HTTP_CLIENTS = new Set(["axios", "got", "superagent", "request"]);
@@ -59,13 +69,34 @@ const SPAWN_MODULES = new Set([
     "child_process", "node:child_process", "cross-spawn", "execa", "shelljs", "zx"
 ]);
 
-const FS_MODULES = new Set(["fs", "node:fs", "fs/promises", "node:fs/promises"]);
+const FS_MODULES = new Set([
+    "fs", "node:fs", "fs/promises", "node:fs/promises", "fs-extra", "fs-extra/esm", "graceful-fs"
+]);
 const FS_BINDING_SPEC = {
     modules: FS_MODULES,
     functions: new Set([...FS_WRITE, ...FS_DELETE, ...FS_READ]),
-    submodules: new Set(["promises"])
+    submodules: new Set(["promises"]),
+    factories: new Set()
 };
-const SPAWN_BINDING_SPEC = { modules: SPAWN_MODULES, functions: SPAWN_FUNCTIONS, submodules: new Set() };
+const SPAWN_BINDING_SPEC = {
+    modules: SPAWN_MODULES, functions: SPAWN_FUNCTIONS, submodules: new Set(), factories: new Set()
+};
+
+// Outbound HTTP through a bound module: const net = require("https"); net.get(u),
+// require("axios").post(u), import { request } from "undici", got(u), axios.create().get(u).
+const NET_MODULES = new Set([
+    "http", "https", "http2", "node:http", "node:https", "node:http2", "axios", "got", "superagent",
+    "request", "node-fetch", "undici", "cross-fetch", "isomorphic-fetch", "ky", "needle"
+]);
+const NET_FUNCTIONS = new Set([...HTTP_METHODS, "fetch", "connect", "stream", "pipeline"]);
+const NET_BINDING_SPEC = {
+    modules: NET_MODULES,
+    functions: NET_FUNCTIONS,
+    submodules: new Set(["default"]),
+    factories: new Set(["create", "extend"])
+};
+// Promise callbacks that receive the module: import("fs").then(m => m.rmSync(p))
+const MODULE_CALLBACKS = new Set(["then"]);
 
 const CHILD_PROCESS_MODULES = new Set(["child_process", "node:child_process"]);
 
@@ -1616,6 +1647,7 @@ function extractFromTree(ast) {
 
     const spawnBindings = spawnBindingsOf(ast.root);
     const fsBindings = spawnBindingsOf(ast.root, FS_BINDING_SPEC);
+    const netBindings = spawnBindingsOf(ast.root, NET_BINDING_SPEC);
     const nativeBindings = nativeBindingsOf(ast.root);
     const evalAliases = evalAliasBindingsOf(ast.root);
     const routes = new Set();
@@ -1632,7 +1664,7 @@ function extractFromTree(ast) {
     walkRuntime(ast.root, node => {
         switch (node.type) {
             case "call_expression":
-                visitCall(node, { facts, routes, imports, calls, signal, spawnBindings, fsBindings, evalAliases, nativeBindings });
+                visitCall(node, { facts, routes, imports, calls, signal, spawnBindings, fsBindings, netBindings, evalAliases, nativeBindings });
                 break;
             case "new_expression": {
                 const constructor = field(node, "constructor");
@@ -1804,6 +1836,11 @@ function spawnBindingsOf(root, spec = SPAWN_BINDING_SPEC) {
     const moduleScopes = new Map();
     const functionScopes = new Map();
     const origins = new Map();
+    // No module of the family is named anywhere in the file: nothing to bind.
+    const source = text(root);
+    if (![...spec.modules].some(name => source.includes(name))) {
+        return { modules, functions, moduleScopes, functionScopes, origins };
+    }
     const setOrigin = (scope, name, origin) => {
         if (scope && name && origin) origins.set(`${spawnScopeKey(scope)}|${name}`, origin);
     };
@@ -1895,8 +1932,32 @@ function spawnBindingsOf(root, spec = SPAWN_BINDING_SPEC) {
         spec.submodules.has(text(field(value, "property"))) &&
         spec.modules.has(inlineModuleSource(field(value, "object")));
 
+    // import("fs").then(m => ...) / .then(({ rmSync }) => ...) / .then(function (m) {...})
+    const bindCallbackParam = (node) => {
+        const callee = unwrapTypeOnly(field(node, "function"));
+        if (callee?.type !== "member_expression" ||
+            !MODULE_CALLBACKS.has(text(field(callee, "property")))) return;
+        const source = inlineModuleSource(field(callee, "object"));
+        if (!spec.modules.has(source)) return;
+        const fn = unwrapTypeOnly(args(node)[0]);
+        if (fn?.type !== "arrow_function" && fn?.type !== "function_expression") return;
+        let param = field(fn, "parameter") ||
+            ((field(fn, "parameters")?.namedChildren || []).filter(c => c.type !== "comment")[0]);
+        if (param?.type === "required_parameter" || param?.type === "optional_parameter") {
+            param = field(param, "pattern") || (param.namedChildren || [])[0];
+        }
+        if (param?.type === "identifier" || param?.type === "object_pattern") {
+            bindNames(param, source, fn);
+        }
+    };
+
     // First pass: preserve existing require/import/destructuring support.
     walk(root, node => {
+        if (node.type === "call_expression") {
+            bindCallbackParam(node);
+            return;
+        }
+
         if (node.type === "variable_declarator") {
             let value = unwrapTypeOnly(field(node, "value"));
 
@@ -1992,7 +2053,18 @@ function spawnBindingsOf(root, spec = SPAWN_BINDING_SPEC) {
             const name = text(target);
             const scope = declarationScopeOf(node);
 
-            if (
+            if (value.type === "call_expression" && spec.factories.size) {
+                // const api = axios.create(...) / got.extend(...)
+                const fnNode = unwrapTypeOnly(field(value, "function"));
+                if (fnNode?.type === "member_expression" &&
+                    spec.factories.has(text(field(fnNode, "property")))) {
+                    const recv = unwrapTypeOnly(field(fnNode, "object"));
+                    const bound = recv?.type === "identifier"
+                        ? spawnResolvesBinding(recv, text(recv), "modules", { moduleScopes, functionScopes })
+                        : spec.modules.has(inlineModuleSource(recv));
+                    if (bound && bindModule(scope, name)) changed = true;
+                }
+            } else if (
                 value.type === "member_expression" ||
                 value.type === "subscript_expression"
             ) {
@@ -2071,11 +2143,32 @@ function fsMethodOf(callee, { object, property }, host, fsBindings) {
         if (base?.type === "identifier") {
             return spawnResolvesBinding(base, text(base), "modules", fsBindings) ? property : null;
         }
-        return FS_MODULES.has(inlineModuleSource(base)) ? property : null;
+        return FS_MODULES.has(inlineModuleSource(base)) && !MODULE_CALLBACKS.has(property) ? property : null;
     }
     if (callee?.type !== "identifier" || !spawnResolvesBinding(callee, property, "functions", fsBindings)) return null;
     const scope = spawnNearestBindingScope(callee, property);
     return fsBindings.origins.get(`${spawnScopeKey(scope)}|${property}`) || null;
+}
+
+// The network function a call reaches through a bound HTTP module, or null.
+function netMethodOf(callee, { object, property }, netBindings) {
+    if (object) {
+        if (!NET_FUNCTIONS.has(property)) return null;
+        let base = unwrapTypeOnly(field(callee, "object"));
+        while (base?.type === "member_expression") base = unwrapTypeOnly(field(base, "object"));
+        if (base?.type === "identifier") {
+            return spawnResolvesBinding(base, text(base), "modules", netBindings) ? property : null;
+        }
+        return NET_MODULES.has(inlineModuleSource(base)) ? property : null;
+    }
+    if (callee?.type === "identifier") {
+        // got(u), nodeFetch(u): the module itself is the client
+        if (spawnResolvesBinding(callee, property, "modules", netBindings)) return property;
+        if (spawnResolvesBinding(callee, property, "functions", netBindings)) return property;
+        return null;
+    }
+    // require("got")(u)
+    return NET_MODULES.has(inlineModuleSource(callee)) ? "call" : null;
 }
 
 function isSpawnCall({ object, property, raw, callee }, host, spawnBindings) {
@@ -2114,7 +2207,7 @@ function isSpawnCall({ object, property, raw, callee }, host, spawnBindings) {
 
     return !SPAWN_ONLY_WHEN_BOUND.has(property);
 }
-function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings, fsBindings, evalAliases, nativeBindings }) {
+function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings, fsBindings, netBindings, evalAliases, nativeBindings }) {
     const callee = unwrapTypeOnly(field(node, "function") || (node.namedChildren || [])[0]);
     const { object, property, raw } = callTarget(node);
     const sequence = callee?.type === "parenthesized_expression"
@@ -2194,6 +2287,15 @@ function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings,
         facts.operations.outboundHttp = true;
         calls.network.add(String(property));
         signal("outbound_http", String(property), node);
+        return;
+    }
+
+    const netMethod = netMethodOf(callee, { object, property }, netBindings);
+    if (netMethod) {
+        const name = object ? `${object}.${property}` : raw || String(property);
+        facts.operations.outboundHttp = true;
+        calls.network.add(name);
+        signal("outbound_http", name, node);
         return;
     }
 

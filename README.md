@@ -340,9 +340,17 @@ Joins an LLM decision with the IR it was made on:
   same file: `require("fs").writeFileSync(...)`, `const files = require("fs")`,
   `const { unlinkSync: del } = require("fs")`, `import { writeFile } from "fs/promises"`,
   `require("fs").promises`. A local variable or parameter that shadows the name
-  is not counted. Values passed through callbacks
-  (`import("fs").then(m => m.writeFileSync(...))`) and wrapper packages such as
-  `fs-extra` are not followed.
+  is not counted. `fs-extra` and `graceful-fs` count as `fs`, including
+  `fs-extra` methods (`outputFile`, `writeJson`, `move` are writes; `remove`,
+  `emptyDir` are deletes).
+- Since 0.4.4, outbound HTTP is recognised the same way for `http`, `https`,
+  `http2`, `axios`, `got`, `superagent`, `request`, `node-fetch`, `undici`,
+  `cross-fetch`, `isomorphic-fetch`, `ky` and `needle`: `const net = require("https"); net.get(u)`,
+  `require("axios").get(u)`, `import { request } from "undici"`, `got(u)`,
+  `axios.create().get(u)` through a variable.
+- A module received directly by a `.then` callback is followed
+  (`import("fs").then(m => m.writeFileSync(...))`, `.then(({ rmSync }) => ...)`);
+  a module passed on to another function or stored elsewhere is not.
 - The text fallback for unparseable source is a substring heuristic and can be
   wrong in both directions; it is marked `facts.ast: false`.
 
