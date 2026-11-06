@@ -347,7 +347,10 @@ Joins an LLM decision with the IR it was made on:
   `http2`, `axios`, `got`, `superagent`, `request`, `node-fetch`, `undici`,
   `cross-fetch`, `isomorphic-fetch`, `ky` and `needle`: `const net = require("https"); net.get(u)`,
   `require("axios").get(u)`, `import { request } from "undici"`, `got(u)`,
-  `axios.create().get(u)` through a variable.
+  `axios.create().get(u)` through a variable. Counted calls are the clients'
+  request methods (HTTP verbs, `request`, `fetch`, `stream`, `got.paginate`,
+  `axios.postForm`, `undici.upgrade`, …); helpers such as `axios.isAxiosError`
+  or `undici.setGlobalDispatcher` are not.
 - A module received directly by a `.then` callback is followed
   (`import("fs").then(m => m.writeFileSync(...))`, `.then(({ rmSync }) => ...)`);
   a module passed on to another function or stored elsewhere is not.
