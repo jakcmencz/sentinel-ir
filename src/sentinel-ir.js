@@ -171,16 +171,23 @@ function inferRisk(filePath, content = "", facts = null) {
         return "medium";
     }
 
-    if (lower.includes("writefile") || lower.includes("unlink")) {
+    if (FS_WRITE_TEXT.test(lower)) {
         return "high";
     }
 
-    if (lower.includes("fetch") || lower.includes("axios")) {
+    if (NET_TEXT.test(lower)) {
         return "medium";
     }
 
     return "low";
 }
+
+// Text fallback for filesystem writes and deletes (lower-cased source).
+const FS_WRITE_TEXT = /writefile|unlink|appendfile|createwritestream|copyfile|outputfile|outputjson|writejson|emptydir|\b(rmsync|rmdir|rmdirsync|truncatesync|renamesync|symlinksync|removesync)\b|\bfs\w*(\s*\.\s*promises)?\s*\.\s*(rm|rename|truncate|remove|move|copy)\s*\(/;
+
+// Text fallback for outbound HTTP (lower-cased source): fetch/axios anywhere, or
+// an HTTP module being loaded.
+const NET_TEXT = /fetch|axios|(\brequire\s*\(\s*|\bfrom\s+|\bimport\s*\(\s*)["'`](node:)?(https?|http2|got|superagent|request|undici|ky|needle)["'`]/;
 
 // Text-fallback counterpart of the native_code fact (lower-cased source).
 // Unparseable code: any trace of a native loader or FFI module counts, since an
@@ -235,7 +242,7 @@ function summarize(content = "", facts = null) {
         lines,
         hasCrypto: text.toLowerCase().includes("crypto"),
         hasFilesystem: text.toLowerCase().includes("fs."),
-        hasNetwork: text.toLowerCase().includes("fetch") || text.toLowerCase().includes("axios")
+        hasNetwork: NET_TEXT.test(text.toLowerCase())
     };
 }
 

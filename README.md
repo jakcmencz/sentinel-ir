@@ -336,6 +336,24 @@ Joins an LLM decision with the IR it was made on:
   combined.
 - Facts are syntactic. Aliases the AST cannot resolve (values passed through
   other modules, computed property names) are not followed.
+- Since 0.4.4, `fs` calls are recognised through any local name bound in the
+  same file: `require("fs").writeFileSync(...)`, `const files = require("fs")`,
+  `const { unlinkSync: del } = require("fs")`, `import { writeFile } from "fs/promises"`,
+  `require("fs").promises`. A local variable or parameter that shadows the name
+  is not counted. `fs-extra` and `graceful-fs` count as `fs`, including
+  `fs-extra` methods (`outputFile`, `writeJson`, `move` are writes; `remove`,
+  `emptyDir` are deletes).
+- Since 0.4.4, outbound HTTP is recognised the same way for `http`, `https`,
+  `http2`, `axios`, `got`, `superagent`, `request`, `node-fetch`, `undici`,
+  `cross-fetch`, `isomorphic-fetch`, `ky` and `needle`: `const net = require("https"); net.get(u)`,
+  `require("axios").get(u)`, `import { request } from "undici"`, `got(u)`,
+  `axios.create().get(u)` through a variable. Counted calls are the clients'
+  request methods (HTTP verbs, `request`, `fetch`, `stream`, `got.paginate`,
+  `axios.postForm`, `undici.upgrade`, …); helpers such as `axios.isAxiosError`
+  or `undici.setGlobalDispatcher` are not.
+- A module received directly by a `.then` callback is followed
+  (`import("fs").then(m => m.writeFileSync(...))`, `.then(({ rmSync }) => ...)`);
+  a module passed on to another function or stored elsewhere is not.
 - The text fallback for unparseable source is a substring heuristic and can be
   wrong in both directions; it is marked `facts.ast: false`.
 
