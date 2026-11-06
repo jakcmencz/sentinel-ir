@@ -215,3 +215,39 @@ test('text fallback flags fs-extra deletes and HTTP module loads in unparseable 
     assert.equal(ir.risk, risk, code);
   }
 });
+
+const netClientMethods = [
+  ['got.paginate', 'import got from "got";\nfor await (const x of got.paginate(u)) {}', 'outbound_http:got.paginate@2'],
+  ['got.paginate.all', 'import got from "got";\nawait got.paginate.all(u);', 'outbound_http:got.paginate.all@2'],
+  ['got.stream', 'const g = require("got");\ng.stream(u);', 'outbound_http:g.stream@2'],
+  ['superagent.del', 'const sa = require("superagent");\nsa.del(u);', 'outbound_http:sa.del@2'],
+  ['superagent agent instance', 'const sa = require("superagent");\nconst agent = sa.agent();\nagent.get(u);', 'outbound_http:agent.get@3'],
+  ['axios.postForm', 'import axios from "axios";\nawait axios.postForm(u, d);', 'outbound_http:axios.postForm@2'],
+  ['axios.options', 'const ax = require("axios");\nax.options(u);', 'outbound_http:ax.options@2'],
+  ['needle.request', 'const n = require("needle");\nn.request("get", u, null, cb);', 'outbound_http:n.request@2'],
+  ['undici.upgrade', 'import { upgrade } from "undici";\nawait upgrade(u);', 'outbound_http:upgrade@2']
+];
+
+for (const [name, code, signal] of netClientMethods) {
+  test(`HTTP client method: ${name}`, () => {
+    const ir = analyze(code);
+    assert.equal(ir.risk, 'medium');
+    assert.deepEqual(signals(ir), [signal]);
+  });
+}
+
+test('HTTP client helpers are not requests', () => {
+  for (const code of [
+    'const ax = require("axios");\nax.isAxiosError(e);\nax.isCancel(e);\nax.CancelToken.source();\nax.mergeConfig(a, b);',
+    'import got from "got";\ngot.mergeOptions(a, b);',
+    'import { setGlobalDispatcher, getGlobalDispatcher } from "undici";\nsetGlobalDispatcher(d);\ngetGlobalDispatcher();',
+    'const n = require("needle");\nn.defaults({ timeout: 1 });',
+    'const g = require("got");\nconst list = [];\nlist.paginate.all(u);',
+    'const { isAxiosError, isCancel: cancelled } = require("axios");\nisAxiosError(e);\ncancelled(e);',
+    'import { Agent, MockAgent as M } from "undici";\nAgent(o);\nM();'
+  ]) {
+    const ir = analyze(code);
+    assert.equal(ir.risk, 'low', code);
+    assert.deepEqual(ir.facts.riskSignals, [], code);
+  }
+});

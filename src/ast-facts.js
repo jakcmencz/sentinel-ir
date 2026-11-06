@@ -88,12 +88,19 @@ const NET_MODULES = new Set([
     "http", "https", "http2", "node:http", "node:https", "node:http2", "axios", "got", "superagent",
     "request", "node-fetch", "undici", "cross-fetch", "isomorphic-fetch", "ky", "needle"
 ]);
-const NET_FUNCTIONS = new Set([...HTTP_METHODS, "fetch", "connect", "stream", "pipeline"]);
+// Request-making methods from the clients' docs; helpers such as axios.isAxiosError,
+// axios.CancelToken, got.mergeOptions or undici.setGlobalDispatcher are not requests.
+const NET_FUNCTIONS = new Set([
+    ...HTTP_METHODS, "options", "del", "fetch", "connect", "stream", "pipeline", "upgrade",
+    "postForm", "putForm", "patchForm", "paginate"
+]);
+// got.paginate.all(u) / got.paginate.each(u)
+const NET_PAGINATE = new Set(["all", "each"]);
 const NET_BINDING_SPEC = {
     modules: NET_MODULES,
     functions: NET_FUNCTIONS,
     submodules: new Set(["default"]),
-    factories: new Set(["create", "extend"])
+    factories: new Set(["create", "extend", "agent"])
 };
 // Promise callbacks that receive the module: import("fs").then(m => m.rmSync(p))
 const MODULE_CALLBACKS = new Set(["then"]);
@@ -2153,8 +2160,11 @@ function fsMethodOf(callee, { object, property }, host, fsBindings) {
 // The network function a call reaches through a bound HTTP module, or null.
 function netMethodOf(callee, { object, property }, netBindings) {
     if (object) {
-        if (!NET_FUNCTIONS.has(property)) return null;
-        let base = unwrapTypeOnly(field(callee, "object"));
+        const receiver = unwrapTypeOnly(field(callee, "object"));
+        const paginate = NET_PAGINATE.has(property) && receiver?.type === "member_expression" &&
+            text(field(receiver, "property")) === "paginate";
+        if (!NET_FUNCTIONS.has(property) && !paginate) return null;
+        let base = receiver;
         while (base?.type === "member_expression") base = unwrapTypeOnly(field(base, "object"));
         if (base?.type === "identifier") {
             return spawnResolvesBinding(base, text(base), "modules", netBindings) ? property : null;
@@ -2164,8 +2174,10 @@ function netMethodOf(callee, { object, property }, netBindings) {
     if (callee?.type === "identifier") {
         // got(u), nodeFetch(u): the module itself is the client
         if (spawnResolvesBinding(callee, property, "modules", netBindings)) return property;
-        if (spawnResolvesBinding(callee, property, "functions", netBindings)) return property;
-        return null;
+        // { request } from "undici" yes; { isAxiosError } from "axios" no
+        if (!spawnResolvesBinding(callee, property, "functions", netBindings)) return null;
+        const scope = spawnNearestBindingScope(callee, property);
+        return NET_FUNCTIONS.has(netBindings.origins.get(`${spawnScopeKey(scope)}|${property}`)) ? property : null;
     }
     // require("got")(u)
     return NET_MODULES.has(inlineModuleSource(callee)) ? "call" : null;
