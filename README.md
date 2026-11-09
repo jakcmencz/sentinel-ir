@@ -8,6 +8,12 @@ filesystem / process / crypto calls, dangerous syntax and a risk level — built
 from the [tree-sitter](https://tree-sitter.github.io/) AST. You send that IR to
 an LLM instead of the raw file.
 
+- npm: <https://www.npmjs.com/package/sentinel-ir>
+- GitLab (main repository): <https://gitlab.com/jakubrojicek11/sentinel-ir>
+- GitHub (mirror): <https://github.com/jakcmencz/sentinel-ir>
+- MCP server for AI agents: [`sentinel-ir-mcp`](https://github.com/jakcmencz/sentinel-ir-mcp)
+- Try it in your browser, nothing to install: <https://sentinel-ir-playground-dc30c8.gitlab.io/>
+
 **Supported languages:**
 
 | `language` | grammar | picked for `target` ending in |
@@ -378,6 +384,15 @@ npm test
 2. Push a tag `v<version>` (tags `v*` are protected).
 3. The `publish` CI job runs the tests, checks the tag matches the version and
    runs `npm publish --provenance` with the protected `NPM_TOKEN` variable.
+
+## Contributing
+
+Development, CI and npm releases run on
+[GitLab](https://gitlab.com/jakubrojicek11/sentinel-ir). The
+[GitHub repository](https://github.com/jakcmencz/sentinel-ir) is a mirror that
+GitLab updates on every push to `main` and every tag. Issues are welcome on
+either; a pull request opened on GitHub is applied on GitLab, and the mirror
+then brings it back.
 
 ## License
 
