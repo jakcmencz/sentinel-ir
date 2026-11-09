@@ -13,6 +13,120 @@ const WASM_GRAMMARS = Object.freeze({
     python: "tree-sitter-python.wasm"
 });
 
+const nodeFlag = (node, key) => typeof node[key] === "function"
+    ? Boolean(node[key]())
+    : Boolean(node[key]);
+
+const errorAt = (position, kind, expected) => ({
+    line: position.row + 1,
+    column: position.column + 1,
+    kind,
+    ...(expected ? { expected } : {})
+});
+
+const OPENING = Object.freeze({ "(": ")", "[": "]", "{": "}" });
+const CLOSING = new Set([")", "]", "}"]);
+const COMPOUND_KEYWORDS = new Set([
+    "if", "elif", "else", "while", "for", "try", "except", "finally", "with", "def", "class", "async"
+]);
+
+function leafTokens(node) {
+    const out = [];
+    const stack = [node];
+    while (stack.length) {
+        const current = stack.pop();
+        const children = current.children || [];
+        if (!children.length) out.push(current);
+        for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
+    }
+    return out;
+}
+
+function firstInnerError(node) {
+    const stack = [...(node.children || [])].reverse();
+    while (stack.length) {
+        const current = stack.pop();
+        if (current.type === "ERROR") return current;
+        if (!nodeFlag(current, "hasError")) continue;
+        const children = current.children || [];
+        for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
+    }
+    return null;
+}
+
+// tree-sitter-python often wraps a whole statement, or the whole file, in one
+// ERROR node starting at its first token, so its start says little. Inside it,
+// look for what CPython would report: an unmatched closing bracket, a block
+// header without ':', or a bracket that is never closed.
+function pythonErrorIn(error, lines) {
+    for (let region = error; region;) {
+        const tokens = leafTokens(region);
+
+        const open = [];
+        let closer = null;
+        for (const token of tokens) {
+            if (nodeFlag(token, "isMissing")) {
+                if (!open.length) return errorAt(token.startPosition, "missing", token.type);
+                break;
+            }
+            if (OPENING[token.type]) open.push(token);
+            else if (CLOSING.has(token.type)) {
+                if (open.length && OPENING[open[open.length - 1].type] === token.type) open.pop();
+                else {
+                    closer = token;
+                    break;
+                }
+            }
+        }
+
+        let headerEnd = null;
+        let depth = 0;
+        let header = false;
+        let colon = false;
+        for (let i = 0; i < tokens.length && !headerEnd; i++) {
+            const token = tokens[i];
+            const prev = tokens[i - 1];
+            const lineStart = !prev || (depth === 0 && token.startPosition.row > prev.endPosition.row &&
+                !(lines[prev.endPosition.row] || "").trimEnd().endsWith("\\"));
+            if (lineStart) {
+                if (header && !colon) {
+                    headerEnd = prev;
+                    break;
+                }
+                header = COMPOUND_KEYWORDS.has(token.type);
+                colon = false;
+            }
+            if (OPENING[token.type]) depth++;
+            else if (CLOSING.has(token.type)) depth = Math.max(0, depth - 1);
+            else if (token.type === ":" && depth === 0) colon = true;
+            else if (token.type === "lambda") header = false;
+        }
+
+        if (headerEnd && (!closer || isBefore(headerEnd.endPosition, closer.startPosition))) {
+            return errorAt(headerEnd.endPosition, "missing", ":");
+        }
+        if (closer) return errorAt(closer.startPosition, "unexpected");
+        if (open.length) {
+            const bracket = open[open.length - 1];
+            return errorAt(bracket.startPosition, "unclosed", OPENING[bracket.type]);
+        }
+
+        const inner = firstInnerError(region);
+        if (inner) {
+            region = inner;
+            continue;
+        }
+        const row = region.startPosition.row;
+        const last = tokens.filter(t => t.startPosition.row === row && t.endPosition.row === row).pop();
+        return errorAt(last ? last.endPosition : region.startPosition, "unexpected");
+    }
+    return null;
+}
+
+function isBefore(a, b) {
+    return a.row < b.row || (a.row === b.row && a.column < b.column);
+}
+
 const TreeParser = {
     parser: null,
     backend: null,
@@ -172,7 +286,7 @@ const TreeParser = {
                     ...this.getMetrics(root),
                     hasError
                 },
-                ...(hasError ? { parseError: this.firstError(root) } : {})
+                ...(hasError ? { parseError: this.firstError(root, language, content) } : {})
             };
         } catch (error) {
             return {
@@ -192,30 +306,24 @@ const TreeParser = {
 
     // Position of the first ERROR or MISSING node. No source text is copied:
     // it is untrusted and goes straight into the IR.
-    firstError(root) {
-        const flag = (node, key) => typeof node[key] === "function"
-            ? Boolean(node[key]())
-            : Boolean(node[key]);
-        const at = (node, kind) => ({
-            line: node.startPosition.row + 1,
-            column: node.startPosition.column + 1,
-            kind,
-            ...(kind === "missing" ? { expected: node.type } : {})
-        });
-
+    firstError(root, language = "javascript", content = "") {
         let current = root;
         while (current) {
-            if (flag(current, "isMissing")) return at(current, "missing");
-            if (current.type === "ERROR") return at(current, "unexpected");
+            if (nodeFlag(current, "isMissing")) return errorAt(current.startPosition, "missing", current.type);
+            if (current.type === "ERROR") {
+                return language === "python"
+                    ? pythonErrorIn(current, content.split("\n"))
+                    : errorAt(current.startPosition, "unexpected");
+            }
 
             let next = null;
             for (const child of current.children || []) {
-                if (flag(child, "isMissing") || child.type === "ERROR" || flag(child, "hasError")) {
+                if (nodeFlag(child, "isMissing") || child.type === "ERROR" || nodeFlag(child, "hasError")) {
                     next = child;
                     break;
                 }
             }
-            if (!next) return at(current, "unexpected");
+            if (!next) return errorAt(current.startPosition, "unexpected");
             current = next;
         }
         return null;
