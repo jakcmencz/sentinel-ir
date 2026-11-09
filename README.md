@@ -399,10 +399,21 @@ Since 0.4.3, when the source parsed with syntax errors, `facts.parseError`
 gives where the first error region starts, for example
 `{ "line": 42, "column": 1, "kind": "missing", "expected": "}" }`.
 `kind` is `missing` (the parser expected a token that is absent; `expected`
-names it) or `unexpected` (the parser could not use the text at that
-position). It never contains source text. It does not say whether the code
+names it), `unexpected` (the parser could not use the text at that
+position) or, since 0.4.5 and for Python only, `unclosed` (the bracket at that
+position is never closed; `expected` names the closing bracket). It never
+contains source text. It does not say whether the code
 is wrong or uses syntax the grammar does not support, for example TypeScript
 `export type *` or variance annotations such as `in T`.
+
+Since 0.4.5, Python errors point where CPython reports them in most cases:
+the bracket that is never closed, the end of an `if`/`def`/`class`/… header
+without `:`, or a closing bracket without a match. Before, tree-sitter's error
+region often started at the beginning of the statement or file, so the result
+was line 1, column 1. On 4 320 broken copies of standard-library files (one
+bracket, comma or colon removed or added), the reported line matches CPython
+in 81 % of cases (0.4.4: 67 %) and the column too in 67 % (0.4.4: 29 %).
+JavaScript and TypeScript positions are unchanged.
 
 `analysisStatus` (0.1.3), `language` (0.2.0), `operations.nativeCode`
 (0.4.0) and `parseError` (0.4.3) are additive fields in the
