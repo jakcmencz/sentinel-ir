@@ -29,8 +29,9 @@
 const AstFacts = require("./ast-facts");
 const TreeParser = require("./tree-parser");
 const PythonFacts = require("./python-facts");
+const RustFacts = require("./rust-facts");
 
-const LANGUAGES = Object.freeze(["javascript", "typescript", "tsx", "python"]);
+const LANGUAGES = Object.freeze(["javascript", "typescript", "tsx", "python", "rust"]);
 
 const LANGUAGE_ALIASES = Object.freeze({
     javascript: "javascript",
@@ -39,7 +40,9 @@ const LANGUAGE_ALIASES = Object.freeze({
     ts: "typescript",
     tsx: "tsx",
     python: "python",
-    py: "python"
+    py: "python",
+    rust: "rust",
+    rs: "rust"
 });
 
 // File extensions that select a grammar when no `language` option is given.
@@ -54,7 +57,8 @@ const EXTENSION_LANGUAGES = Object.freeze({
     ".cts": "typescript",
     ".tsx": "tsx",
     ".py": "python",
-    ".pyi": "python"
+    ".pyi": "python",
+    ".rs": "rust"
 });
 
 // Explicit `language` wins; otherwise the target's extension decides. An
@@ -284,7 +288,9 @@ function compressFacts(facts) {
 function analyze(content, options = {}) {
     const opts = readOptions(options);
     const facts = opts.supported
-        ? (opts.language === "python" ? PythonFacts.extract(content) : AstFacts.extract(content, opts.language))
+        ? (opts.language === "python" ? PythonFacts.extract(content)
+            : opts.language === "rust" ? RustFacts.extract(content, { target: opts.target })
+                : AstFacts.extract(content, opts.language))
         : {
             ...AstFacts.emptyFacts(),
             error: `unsupported language: ${opts.language} (supported: ${LANGUAGES.join(", ")})`

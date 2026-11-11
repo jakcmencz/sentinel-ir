@@ -10,7 +10,8 @@ const WASM_GRAMMARS = Object.freeze({
     javascript: "tree-sitter-javascript.wasm",
     typescript: "tree-sitter-typescript.wasm",
     tsx: "tree-sitter-tsx.wasm",
-    python: "tree-sitter-python.wasm"
+    python: "tree-sitter-python.wasm",
+    rust: "tree-sitter-rust.wasm"
 });
 
 const nodeFlag = (node, key) => typeof node[key] === "function"

@@ -14,7 +14,7 @@ test('sync analyze() on TypeScript before initialization is incomplete, not gues
 });
 
 test('LANGUAGES lists the supported grammars', () => {
-    assert.deepEqual(LANGUAGES, ['javascript', 'typescript', 'tsx', 'python']);
+    assert.deepEqual(LANGUAGES, ['javascript', 'typescript', 'tsx', 'python', 'rust']);
 });
 
 test('language is inferred from the target extension', async () => {
