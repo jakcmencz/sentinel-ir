@@ -266,7 +266,7 @@ source-only analyzer does not run.
 (`scripts/rust-grammar/patch-grammar.py`; `scripts/rust-grammar/build.sh`
 rebuilds the same file byte for byte) for syntax the release rejects:
 wasm-bindgen `pub type X;` in `extern` blocks (all of `web-sys` and `js-sys`),
-`safe fn` / `safe static`, `safe` and `auto` as names, `const impl`,
+`safe fn` / `safe static`, `safe` and `auto` as names and type names, `const impl`,
 `const trait`, `[const]` / `~const` bounds, trait aliases, `macro` 2.0,
 negative const generic arguments, `f16` / `f128`, `super let`, `const`
 closures, attributes on expressions, `Type::<T>` in types, `fn(&_)` and

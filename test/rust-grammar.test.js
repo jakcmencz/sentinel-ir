@@ -10,6 +10,7 @@ const syntax = [
     ['wasm-bindgen extern types (web-sys, js-sys)', 'extern "C" { pub type AbortController; #[wasm_bindgen(method)] pub fn abort(this: &AbortController); }'],
     ['unsafe extern with safe items', 'unsafe extern "C" { pub safe fn f() -> u64; safe static X: i32; pub unsafe fn g(); }'],
     ['safe and auto as identifiers', 'fn g(safe: bool, auto: u8) -> u8 { let auto = auto + 1; let safe = !safe; auto.max(safe as u8) }'],
+    ['safe and auto as type names', 'type safe = u8; struct W(safe, auto); fn g(x: Vec<safe>, d: &dyn auto) -> impl safe { x } impl safe for auto {}'],
     ['const impl and [const] / ~const bounds', 'const impl<T: [const] Clone> Foo<T> { fn h(f: impl [const] FnOnce(T) -> bool + ~const Destruct) {} }'],
     ['const and auto traits', 'pub const trait Tr { fn f(); } pub unsafe auto trait Send2 {}'],
     ['trait aliases', 'trait Al = Clone + Send; pub trait Bl<T> = Iterator<Item = T> where T: Copy;'],

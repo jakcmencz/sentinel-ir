@@ -153,7 +153,8 @@ rep("""    [$._type, $._pattern],""","""    [$._type, $._pattern],
     [$.function_modifiers, $.trait_item],
     [$.function_modifiers, $.impl_item],
     [$.function_modifiers, $.impl_item, $.trait_item],
-    [$.reference_type, $._pattern],""")
+    [$.reference_type, $._pattern],
+    [$._contextual_type_identifier, $._pattern],""")
 # f16 / f128 (nightly float types and literal suffixes)
 rep("""  'f32',
   'f64',
@@ -300,4 +301,14 @@ rep("""        $._reserved_identifier,
         alias('str', $.identifier),
         alias('try', $.identifier),
       )),""")
+# ...and as type names (`x: safe`, `impl auto for T`, `dyn safe`)
+s=s.replace("""    _type_identifier: $ => alias($.identifier, $.type_identifier),""","""    _type_identifier: $ => alias($.identifier, $.type_identifier),
+    _contextual_type_identifier: $ => alias(choice('safe', 'auto'), $.type_identifier),""")
+for rule in ('_type', 'impl_item', 'abstract_type', 'dynamic_type'):
+    head = '    %s: $ => ' % rule
+    assert s.count(head)==1, rule
+    i = s.index(head); j = s.index("\n\n", i)
+    body = s[i:j]
+    assert body.count('$._type_identifier,')==1, rule
+    s = s[:i] + body.replace('$._type_identifier,', '$._type_identifier,\n        $._contextual_type_identifier,') + s[j:]
 open(p,'w').write(s)

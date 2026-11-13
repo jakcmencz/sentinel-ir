@@ -23,4 +23,4 @@ Copyright (c) 2017 Maxim Sokolov, MIT License; see
 wasm/LICENSE-tree-sitter-rust. The modifications (newer and unstable Rust
 syntax, wasm-bindgen extern types) are in scripts/rust-grammar/patch-grammar.py
 and scripts/rust-grammar/build.sh rebuilds the file reproducibly (SHA-256
-0bc844e255f476423f2dd1dc22e3f44cc9a16c60f3e62d2c5c97a44bc681b0ae).
+d936016197066049a3e16d5cdeec9054099e9976797dfd8e79dfbcf89ad71e50).
