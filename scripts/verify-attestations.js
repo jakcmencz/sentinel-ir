@@ -6,7 +6,10 @@
 const { spawn } = require("node:child_process");
 const fs = require("node:fs"), os = require("node:os"), path = require("node:path");
 const pkg = require("../package.json");
-const name = pkg.name, version = process.argv[2] || pkg.version;
+// Argument: a version of this package, or name@version (used by the CI self-test).
+const spec = process.argv[2] || pkg.version, at = spec.lastIndexOf("@");
+const name = at > 0 ? spec.slice(0, at) : pkg.name;
+const version = at > 0 ? spec.slice(at + 1) : spec;
 const want = ["https://github.com/npm/attestation/tree/main/specs/publish/v0.1", "https://slsa.dev/provenance/v0.2"];
 const npms = ["10", "11"];
 const timeoutMs = Number(process.env.ATTEST_TIMEOUT_MS || 600000);
