@@ -55,6 +55,8 @@ const NATIVE_CALLS = new Set([
     "libloading::os::windows::Library::new", "libloading::os::windows::Library::load_with_flags",
     "dlopen2::wrapper::Container::load", "dlopen2::raw::Library::open", "dlopen::raw::Library::open",
     "libc::dlopen", "libc::dlsym",
+    // Build-time C/C++ compilation and native library linking (build.rs).
+    "cc::Build::new", "cmake::Config::new", "cmake::build", "pkg_config::probe_library", "vcpkg::find_package",
     ...["LoadLibraryA", "LoadLibraryW", "LoadLibraryExA", "LoadLibraryExW", "GetProcAddress"].flatMap(name => [
         `windows::Win32::System::LibraryLoader::${name}`, `windows_sys::Win32::System::LibraryLoader::${name}`,
         `winapi::um::libloaderapi::${name}`
@@ -105,7 +107,17 @@ const CONSTANT_COMPARE_CALLS = new Set([
     "constant_time_eq::constant_time_eq", "ring::constant_time::verify_slices_are_equal", "openssl::memcmp::eq"
 ]);
 
-const ENV_CALLS = new Set(["std::env::var", "std::env::var_os", "std::env::remove_var", "std::env::set_var"]);
+const ENV_CALLS = new Set([
+    "std::env::var", "std::env::var_os", "std::env::remove_var", "std::env::set_var",
+    "dotenvy::var", "dotenvy::var_os", "dotenv::var", "dotenv::var_os"
+]);
+const ENV_ALL_CALLS = new Set(["std::env::vars", "std::env::vars_os"]);
+const DOTENV_FILE_CALLS = new Set(["dotenvy", "dotenv"].flatMap(crate => [
+    "dotenv", "dotenv_override", "from_path", "from_path_override", "from_filename", "from_filename_override",
+    "from_path_iter", "from_filename_iter", "dotenv_iter"
+].map(name => `${crate}::${name}`)));
+const COMPILER_READS = /^(include|include_str|include_bytes)!$|^#\[path\]$/;
+const LINK_DIRECTIVE = /^cargo::?rustc-link-(lib|search)=/;
 const ENV_MACROS = new Set(["env", "option_env"]);
 const INCLUDE_MACROS = new Set(["include", "include_str", "include_bytes"]);
 
@@ -300,6 +312,8 @@ function extractFrom(ast, options) {
     const signals = [];
     const signal = (name, evidence, node) => signals.push({ signal: name, evidence, line: line(node) });
 
+    // A `mod reqwest` in the file shadows the crate of that name.
+    const localModules = new Set();
     // `use` applies to its whole module wherever it is written, so collect all first.
     walk(root, node => {
         if (node.type === "use_declaration") {
@@ -307,6 +321,8 @@ function extractFrom(ast, options) {
             if (argument) resolver.visitUse(argument, []);
         } else if (node.type === "extern_crate_declaration") {
             resolver.addExternCrate(node);
+        } else if (node.type === "mod_item") {
+            localModules.add(text(field(node, "name")));
         }
     });
 
@@ -321,7 +337,8 @@ function extractFrom(ast, options) {
 
     const target = typeof options.target === "string" ? options.target : "";
     // src/build.rs is a module and tests/build.rs an integration test, not a Cargo build script.
-    if (/(^|[\\/])build\.rs$/i.test(target) && !/(^|[\\/])(src|tests|examples|benches)[\\/]build\.rs$/i.test(target)) signal("build_script", "build.rs runs on the build machine at compile time", root);
+    const buildScript = /(^|[\\/])build\.rs$/i.test(target) && !/(^|[\\/])(src|tests|examples|benches)[\\/]build\.rs$/i.test(target);
+    if (buildScript) signal("build_script", "build.rs runs on the build machine at compile time", root);
 
     const addEnv = (name, evidence, node) => {
         env.add(name);
@@ -358,6 +375,7 @@ function extractFrom(ast, options) {
     const visitCall = (q, call, args) => {
         if (!q) return;
         const root0 = q.split("::")[0];
+        if (localModules.has(root0)) return;
         if (SPAWN_CALLS.has(q)) {
             ops.processSpawn = true;
             calls.process.add(q);
@@ -425,6 +443,12 @@ function extractFrom(ast, options) {
             const name = args ? stringLiteral(args) : null;
             if (name) addEnv(name, `${q}("${name}")`, call);
         }
+        if (ENV_ALL_CALLS.has(q)) signal("secret_access", `${q}()`, call);
+        if (DOTENV_FILE_CALLS.has(q)) {
+            ops.diskRead = true;
+            calls.filesystem.add(q);
+            signal("secret_access", `${q}() loads .env`, call);
+        }
     };
 
     const visitMacro = (segments, tokens, node) => {
@@ -441,6 +465,10 @@ function extractFrom(ast, options) {
             calls.filesystem.add(`${name}!`);
         }
         if (ASM_MACROS.has(name) && (segments.length === 1 || q === `std::arch::${name}`)) native(`${name}!`, node);
+        if (buildScript && (name === "println" || name === "print") && segments.length === 1) {
+            const directive = stringLiteral(firstString);
+            if (directive && LINK_DIRECTIVE.test(directive)) native(`println!("${directive.slice(0, 60)}")`, node);
+        }
         if (q && SPAWN_MACROS.has(q)) {
             ops.processSpawn = true;
             calls.process.add(`${q}!`);
@@ -493,6 +521,11 @@ function extractFrom(ast, options) {
         }
         if (segments.length === 1 && NATIVE_ATTRIBUTES.has(name)) {
             native(`#[${name}]`, node);
+            return;
+        }
+        if (segments.length === 1 && name === "path" && attribute.namedChildren.some(child => child.type === "string_literal")) {
+            ops.diskRead = true;
+            calls.filesystem.add("#[path]");
             return;
         }
         if (segments.length === 1 && /^proc_macro(_derive|_attribute)?$/.test(name)) {
@@ -669,4 +702,18 @@ function exportsOf(root) {
     return [...names].sort();
 }
 
-module.exports = { extract };
+// build.rs and proc macros run on the developer's machine during `cargo build`,
+// so file access at run time (not include!/#[path], which the compiler reads),
+// the network or secret-like environment variables there are at least high.
+function compileTimeRisk(facts, risk) {
+    if (risk !== "low" && risk !== "medium") return risk;
+    const signals = facts?.riskSignals || [];
+    if (!signals.some(s => s.signal === "build_script" || s.signal === "compile_time_code")) return risk;
+    const ops = facts.operations || {};
+    const files = (facts.calls?.filesystem || []).some(call => !COMPILER_READS.test(call));
+    const touches = ((ops.diskRead || ops.diskWrite) && files) || ops.outboundHttp || ops.inboundHttp
+        || signals.some(s => s.signal === "secret_access");
+    return touches ? "high" : risk;
+}
+
+module.exports = { extract, compileTimeRisk };

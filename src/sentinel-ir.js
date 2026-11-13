@@ -154,7 +154,7 @@ function inferRisk(filePath, content = "", facts = null) {
     const path = String(filePath || "").toLowerCase();
 
     if (facts?.ast) {
-        const risk = AstFacts.riskOf(facts);
+        const risk = RustFacts.compileTimeRisk(facts, AstFacts.riskOf(facts));
         // A file that lives on the security path is never below medium, even
         // when its syntax looks harmless.
         if (risk === "low" && path.includes("crypto")) return "medium";

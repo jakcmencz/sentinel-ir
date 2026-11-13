@@ -181,3 +181,65 @@ test('deeply nested and large Rust input completes', async () => {
     assert.equal(ir.facts.exports.length, 5000);
     assert.ok(Date.now() - started < 5000);
 });
+
+test('compile-time code that touches files, network or non-Cargo env is at least high', async () => {
+    const proc = '#[proc_macro_attribute] pub fn m(a: TokenStream, i: TokenStream) -> TokenStream { std::fs::read_to_string("/etc/passwd").unwrap(); i }';
+    assert.equal((await rs(proc)).risk, 'high');
+    assert.equal((await rs(proc.replace('#[proc_macro_attribute] ', ''))).risk, 'low');
+    assert.equal((await rs('fn main() { std::fs::write("x", "y").unwrap(); }', 'build.rs')).risk, 'high');
+    assert.equal((await rs('fn main() { std::fs::write("x", "y").unwrap(); }', 'src/build.rs')).risk, 'medium');
+    assert.equal((await rs('fn main() { std::env::var("AWS_SECRET").ok(); }', 'build.rs')).risk, 'high');
+    assert.equal((await rs('fn main() { reqwest::blocking::get("http://x"); }', 'build.rs')).risk, 'high');
+    assert.equal((await rs('#[path = "x.rs"] mod x; fn main() { include!(concat!(env!("OUT_DIR"), "/v.rs")); }', 'build.rs')).risk, 'low');
+    assert.equal((await rs('#[proc_macro] pub fn m(i: TokenStream) -> TokenStream { let _ = include_str!("README.md"); i }')).risk, 'low');
+    assert.equal((await rs('#[proc_macro] pub fn m(i: TokenStream) -> TokenStream { std::fs::File::open("x"); i }')).risk, 'high');
+    for (const name of ['OUT_DIR', 'TARGET', 'CARGO_MANIFEST_DIR', 'CARGO_FEATURE_STD', 'DEP_Z_INCLUDE', 'RUSTC', 'PROFILE', 'DOCS_RS', 'ICU4X_DATA_DIR']) {
+        assert.equal((await rs(`fn main() { std::env::var("${name}").unwrap(); println!("cargo:rerun-if-changed=build.rs"); }`, 'build.rs')).risk, 'low', name);
+    }
+    assert.equal((await rs('fn main() { std::process::exit(1) }', 'build.rs')).risk, 'low');
+    assert.equal((await rs('#[proc_macro_derive(X)] pub fn x(i: TokenStream) -> TokenStream { i }')).risk, 'low');
+    assert.equal((await rs('fn main() { std::process::Command::new("sh"); }', 'build.rs')).risk, 'critical');
+});
+
+test('build.rs compiling C or linking native libraries is native code', async () => {
+    for (const src of ['cc::Build::new().file("x.c").compile("x");', 'cmake::build("lib");', 'cmake::Config::new("lib").build();',
+        'pkg_config::probe_library("z").unwrap();', 'vcpkg::find_package("z").unwrap();', 'println!("cargo:rustc-link-lib=foo");',
+        'println!("cargo::rustc-link-lib=static=foo");', 'println!("cargo:rustc-link-search=native=/opt/lib");']) {
+        const ir = await rs(`fn main() { ${src} }`, 'build.rs');
+        assert.ok(ops(ir).includes('nativeCode'), src);
+        assert.equal(ir.risk, 'critical', src);
+    }
+    assert.ok(!ops(await rs('fn main() { println!("cargo:rustc-link-lib=foo"); }', 'src/main.rs')).includes('nativeCode'));
+    assert.ok(!ops(await rs('fn main() { println!("cargo:rerun-if-changed=x"); println!("{}", "cargo:rustc-link-lib=x"); }', 'build.rs')).includes('nativeCode'));
+});
+
+test('env: std::env::vars, dotenvy / dotenv', async () => {
+    const all = await rs('use std::env; fn f() { for (k, v) in env::vars() {} let _ = std::env::vars_os(); }');
+    assert.deepEqual(signals(all).filter(s => s.startsWith('secret_access:')), ['secret_access:std::env::vars()', 'secret_access:std::env::vars_os()']);
+    const dot = await rs('fn f() { dotenvy::var("DB_PASSWORD").unwrap(); dotenv::var("PORT").ok(); }');
+    assert.deepEqual(dot.facts.env, ['DB_PASSWORD', 'PORT']);
+    assert.ok(signals(dot).includes('secret_access:dotenvy::var("DB_PASSWORD")'));
+    for (const call of ['dotenvy::dotenv()', 'dotenv::dotenv()', 'dotenvy::from_path(".env.prod")', 'dotenvy::from_filename_override("x")']) {
+        const ir = await rs(`fn f() { ${call}.ok(); }`);
+        assert.ok(ops(ir).includes('diskRead'), call);
+        assert.ok(signals(ir).some(s => s.startsWith('secret_access:') && s.endsWith('loads .env')), call);
+    }
+    const local = await rs('mod dotenvy { pub fn dotenv() {} } fn f() { self::dotenvy::dotenv(); }');
+    assert.deepEqual(ops(local), []);
+});
+
+test('#[path = "..."] mod reads another file', async () => {
+    const ir = await rs('#[path = "../../evil.rs"] mod x;');
+    assert.ok(ops(ir).includes('diskRead'));
+    assert.deepEqual(ir.facts.calls.filesystem, ['#[path]']);
+    assert.deepEqual(ops(await rs('#[cfg(test)] mod x;')), []);
+});
+
+test('a local mod named like a crate is not that crate', async () => {
+    for (const src of ['mod cc { pub struct Build; } fn main() { cc::Build::new(); }', 'mod reqwest { pub fn get(_: &str) {} } fn f() { reqwest::get("x"); }',
+        'mod libloading; fn f() { libloading::Library::new("x"); }', 'mod dotenvy { pub fn dotenv() {} } fn f() { dotenvy::dotenv(); }']) {
+        assert.deepEqual(ops(await rs(src, 'build.rs')), [], src);
+    }
+    assert.ok(ops(await rs('mod util {} fn f() { reqwest::get("x"); }')).includes('outboundHttp'));
+    assert.ok(ops(await rs('mod fs {} fn f() { std::fs::remove_file("x"); }')).includes('diskDelete'));
+});

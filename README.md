@@ -233,14 +233,14 @@ declarations (including `as` aliases, `{...}` lists, `self` and `*` globs) and
 |---|---|
 | `processSpawn` (critical) | `Command::new` of `std::process`, `tokio::process`, `async_std::process`, `async_process`, `smol::process`; `nix::unistd::exec*` / `fork`, `nix::spawn::posix_spawn*`; `libc::system / popen / fork / exec* / posix_spawn*`; `subprocess::Exec / Popen`; `duct::cmd`, `xshell::cmd!`, `cmd_lib` macros |
 | `childProcess` (critical) | `use` of one of those `Command` types, or a `*` glob of their module |
-| `nativeCode` (critical) | `unsafe` blocks, `unsafe fn`, `unsafe impl`, `unsafe trait`, `extern "ABI" { ... }` (also `unsafe extern`), `extern "C" fn`, `#[no_mangle]` / `#[export_name]` / `#[link_section]` (also inside `#[unsafe(...)]`), `asm!` / `global_asm!` / `naked_asm!`, `libloading` / `dlopen2` / `libc::dlopen`, `LoadLibrary*` / `GetProcAddress` from `windows`, `windows-sys`, `winapi` |
+| `nativeCode` (critical) | `unsafe` blocks, `unsafe fn`, `unsafe impl`, `unsafe trait`, `extern "ABI" { ... }` (also `unsafe extern`), `extern "C" fn`, `#[no_mangle]` / `#[export_name]` / `#[link_section]` (also inside `#[unsafe(...)]`), `asm!` / `global_asm!` / `naked_asm!`, `libloading` / `dlopen2` / `libc::dlopen`, `LoadLibrary*` / `GetProcAddress` from `windows`, `windows-sys`, `winapi`; C/C++ built or linked at build time: `cc::Build`, `cmake`, `pkg_config::probe_library`, `vcpkg::find_package`, `println!("cargo:rustc-link-lib=...")` / `rustc-link-search` in `build.rs` |
 | `dynamicEval` (critical) | embedded interpreters: `rhai::Engine`, `mlua::Lua`, `rlua::Lua`, `boa_engine::Context`, `deno_core::JsRuntime`, `v8::Isolate / Script::compile`, `pyo3::Python::run / eval` |
 | `processExit` | `std::process::exit / abort`, `libc::exit / _exit / abort` |
 | `diskDelete` (high) | `remove_file`, `remove_dir`, `remove_dir_all` of `std::fs`, `tokio::fs`, `async_std::fs`, `fs_err` |
-| `diskWrite` / `diskRead` | `write`, `create_dir(_all)`, `rename`, `copy`, `hard_link`, `set_permissions`, `File::create(_new)`, symlinks, `tempfile`; `read`, `read_to_string`, `read_dir`, `read_link`, `File::open`, `walkdir`, `include_str!` / `include_bytes!` / `include!`; `OpenOptions` by its `.write / .append / .create / .truncate / .read` chain (a builder that is not opened in place counts as both) |
+| `diskWrite` / `diskRead` | `write`, `create_dir(_all)`, `rename`, `copy`, `hard_link`, `set_permissions`, `File::create(_new)`, symlinks, `tempfile`; `read`, `read_to_string`, `read_dir`, `read_link`, `File::open`, `walkdir`, `include_str!` / `include_bytes!` / `include!`, `#[path = "..."] mod`; `OpenOptions` by its `.write / .append / .create / .truncate / .read` chain (a builder that is not opened in place counts as both) |
 | `outboundHttp` | `reqwest`, `ureq`, `surf`, `isahc`, `attohttpc`, `hyper` / `hyper_util` clients, `curl`, `awc`, `tungstenite`, `std::net` / `tokio::net` / `async_std::net` `TcpStream::connect`, `UdpSocket::bind` |
 | `inboundHttp` and `routes` | `TcpListener::bind`, `UnixListener::bind`, `axum::serve`, `actix_web::HttpServer::new`, `hyper::Server`, `warp::serve`, `tiny_http`, `rocket::build`, `tide`, `poem`, `salvo`; routes from axum `.route("/p", get(h).post(h))`, actix `.route("/p", web::get())` and actix / rocket / ntex attributes `#[get("/p")]` |
-| `env` | `std::env::var / var_os / set_var / remove_var` with a literal name, `env!`, `option_env!`; secret-like names are a `secret_access` signal |
+| `env` | `std::env::var / var_os / set_var / remove_var` and `dotenvy` / `dotenv` `var` with a literal name, `env!`, `option_env!`; secret-like names are a `secret_access` signal, and so are `std::env::vars()` / `vars_os()` (every variable) and `dotenvy` / `dotenv` loading a `.env` file (also `diskRead`) |
 | `cryptoUse` / `secretComparison` | calls into `sha1`, `sha2`, `sha3`, `md5`, `hmac`, `ring`, `openssl`, `aes(-gcm)`, `chacha20poly1305`, `rsa`, `ed25519-dalek`, `argon2`, `bcrypt`, `jsonwebtoken`, `blake2/3` and others; `==` / `!=` on a secret-like name; `subtle::ConstantTimeEq::ct_eq`, `constant_time_eq`, `ring::constant_time`, `openssl::memcmp::eq` |
 
 Rust also has code that runs while it is being compiled, which is a common way
@@ -249,7 +249,11 @@ to attack through a dependency: a `target` named `build.rs` adds a
 or `benches/build.rs`, which are a module and test targets), and `#[proc_macro]`, `#[proc_macro_derive]` and
 `#[proc_macro_attribute]` add a `compile_time_code` signal. Neither changes
 the risk on its own; what the code does (for example `Command::new` in
-`build.rs`) does.
+`build.rs`) does. In such a file, reading or writing files at run time, the
+network or a secret-like environment variable is at least `high`, because it
+happens on the developer's machine during `cargo build`. `include!` /
+`include_str!` / `#[path]` (read by the compiler) and Cargo's own variables
+such as `OUT_DIR` or `CARGO_CFG_*` do not raise it.
 
 Exports are top-level items marked plain `pub` (not `pub(crate)`), names
 re-exported with `pub use` and `#[macro_export]` macros.
