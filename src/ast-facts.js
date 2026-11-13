@@ -24,6 +24,7 @@
  */
 
 const TreeParser = require("./tree-parser");
+const { named, codeText, withoutComments } = require("./ir-text");
 
 const ROUTE_HOSTS = new Set(["app", "router", "server", "api"]);
 const ROUTE_METHODS = new Set(["get", "post", "put", "patch", "delete", "head", "options", "all"]);
@@ -134,7 +135,7 @@ const SECRETISH = /(token|secret|signature|api[_-]?key|apikey|password|passwd|cr
 function walk(node, visit) {
     if (!node) return;
     visit(node);
-    const children = node.namedChildren || node.children || [];
+    const children = named(node) || node.children || [];
     for (const child of children) walk(child, visit);
 }
 
@@ -185,7 +186,7 @@ const TYPE_ONLY_NODES = new Set([
 ]);
 
 function tsInner(node) {
-    const children = node.namedChildren || [];
+    const children = named(node) || [];
     return node.type === "type_assertion" ? children[children.length - 1] : children[0];
 }
 
@@ -199,7 +200,7 @@ function unwrapTypeOnly(node) {
             continue;
         }
         if (current.type === "parenthesized_expression") {
-            const children = current.namedChildren || [];
+            const children = named(current) || [];
             if (children.length === 1 && TS_WRAPPERS.has(children[0].type)) {
                 current = children[0];
                 continue;
@@ -226,7 +227,7 @@ function hasTypeWrapper(node) {
 // chain, so `(fs as any).promises` reads as `fs.promises`. Plain JavaScript is
 // returned unchanged.
 function exprText(node) {
-    if (!hasTypeWrapper(node)) return text(node);
+    if (!hasTypeWrapper(node)) return withoutComments(node);
     const inner = unwrapTypeOnly(node);
     if (inner !== node) return exprText(inner);
     if (node.type === "member_expression") {
@@ -248,7 +249,7 @@ function isTypeOnlySpecifier(node) {
 
 // `import cp = require("child_process")`: a runtime require in TypeScript.
 function importRequireClauseOf(node) {
-    return (node.namedChildren || []).find(child => child.type === "import_require_clause") || null;
+    return (named(node) || []).find(child => child.type === "import_require_clause") || null;
 }
 
 // Like walk(), but skips type-only syntax so `typeof import("fs")` in a type
@@ -256,7 +257,7 @@ function importRequireClauseOf(node) {
 function walkRuntime(node, visit) {
     if (!node) return;
     visit(node);
-    let children = node.namedChildren || node.children || [];
+    let children = named(node) || node.children || [];
     if (node.type === "as_expression" || node.type === "satisfies_expression") {
         children = children.slice(0, 1);
     } else if (node.type === "type_assertion") {
@@ -270,7 +271,7 @@ function walkRuntime(node, visit) {
 // A call target split into `object.property`, e.g. fs.writeFileSync or
 // crypto.createHmac. `object` is null for a bare identifier call like eval(x).
 function callTarget(callNode) {
-    const callee = unwrapTypeOnly(field(callNode, "function") || (callNode.namedChildren || [])[0]);
+    const callee = unwrapTypeOnly(field(callNode, "function") || (named(callNode) || [])[0]);
     if (!callee) return { object: null, property: null, raw: "" };
 
     // `import("child_process")` is its own node type, not an identifier.
@@ -300,12 +301,12 @@ function callTarget(callNode) {
         };
     }
 
-    return { object: null, property: null, raw: text(callee).split("\n")[0] };
+    return { object: null, property: null, raw: withoutComments(callee).split("\n")[0] };
 }
 
 function args(callNode) {
     const list = field(callNode, "arguments");
-    return list ? (list.namedChildren || []) : [];
+    return list ? (named(list) || []) : [];
 }
 
 function rootObjectOf(objectText) {
@@ -342,20 +343,20 @@ function bindingPatternHasName(node, name) {
     // Default parameter: only its left side declares a binding.
     if (node.type === "assignment_pattern") {
         const left = field(node, "left") ||
-            (node.namedChildren || [])[0];
+            (named(node) || [])[0];
         return bindingPatternHasName(left, name);
     }
 
     // Object destructuring: the value side is the bound name.
     if (node.type === "pair_pattern") {
         const value = field(node, "value");
-        const children = node.namedChildren || [];
+        const children = named(node) || [];
         return bindingPatternHasName(
             value || children[children.length - 1], name
         );
     }
 
-    return (node.namedChildren || []).some(
+    return (named(node) || []).some(
         child => bindingPatternHasName(child, name)
     );
 }
@@ -376,7 +377,7 @@ function lexicalDeclarationHasName(node, name) {
         return false;
     }
 
-    return (node.namedChildren || []).some(
+    return (named(node) || []).some(
         child => lexicalDeclarationHasName(child, name)
     );
 }
@@ -385,17 +386,17 @@ function lexicalDeclarationHasName(node, name) {
 function importStatementHasBinding(statement, name) {
     const requireClause = importRequireClauseOf(statement);
     if (requireClause) {
-        const local = (requireClause.namedChildren || []).find(child => child.type === "identifier");
+        const local = (named(requireClause) || []).find(child => child.type === "identifier");
         return Boolean(local && nameMatches(text(local), name));
     }
 
-    const clause = (statement.namedChildren || []).find(
+    const clause = (named(statement) || []).find(
         child => child.type === "import_clause"
     );
 
     if (!clause) return false;
 
-    for (const child of clause.namedChildren || []) {
+    for (const child of named(clause) || []) {
         // Default import: import Function from "module"
         if (child.type === "identifier" && nameMatches(text(child), name)) {
             return true;
@@ -403,7 +404,7 @@ function importStatementHasBinding(statement, name) {
 
         // Namespace import: import * as Function from "module"
         if (child.type === "namespace_import") {
-            const children = child.namedChildren || [];
+            const children = named(child) || [];
             const local = field(child, "alias") ||
                 children[children.length - 1];
 
@@ -412,10 +413,10 @@ function importStatementHasBinding(statement, name) {
 
         // Named imports: import { run as Function } from "module"
         if (child.type === "named_imports") {
-            for (const specifier of child.namedChildren || []) {
+            for (const specifier of named(child) || []) {
                 if (specifier.type !== "import_specifier") continue;
 
-                const children = specifier.namedChildren || [];
+                const children = named(specifier) || [];
                 const local = field(specifier, "alias") ||
                     (children.length >= 2
                         ? children[children.length - 1]
@@ -479,7 +480,7 @@ function lexicalScopeHasBinding(scope, name) {
 function scannedLexicalScopeHasBinding(scope, name) {
     if (scope.type === "catch_clause") {
         const parameter = field(scope, "parameter") ||
-            (scope.namedChildren || []).find(
+            (named(scope) || []).find(
                 child => child.type === "identifier" ||
                          child.type === "catch_formal_parameter"
             );
@@ -488,7 +489,7 @@ function scannedLexicalScopeHasBinding(scope, name) {
     }
 
     function scan(node) {
-        for (const child of node.namedChildren || []) {
+        for (const child of named(node) || []) {
             if (child.type === "import_statement" &&
                 importStatementHasBinding(child, name)) {
                 return true;
@@ -543,7 +544,7 @@ function scannedVarScopeHasBinding(scope, name) {
     }
 
     function scan(node) {
-        for (const child of node.namedChildren || []) {
+        for (const child of named(node) || []) {
             // A nested function has its own var scope.
             if (FUNCTION_SCOPE_TYPES.has(child.type)) continue;
 
@@ -594,7 +595,7 @@ function scannedFunctionScopeHasBinding(scope, name) {
 
     if (bindingPatternHasName(parameters, name)) return true;
 
-    for (const child of scope.namedChildren || []) {
+    for (const child of named(scope) || []) {
         if (child.type === "formal_parameters" &&
             bindingPatternHasName(child, name)) {
             return true;
@@ -679,7 +680,7 @@ function evalAliasNodeIndex(nodes, target) {
 
 
 function evalAliasIfParts(node) {
-    const children = node.namedChildren || [];
+    const children = named(node) || [];
     const alternative = field(node, "alternative") ||
         children.find(child => child.type === "else_clause") || null;
     const condition = field(node, "condition") ||
@@ -694,13 +695,13 @@ function evalAliasIfParts(node) {
     return { condition, consequence, alternative };
 }
 function evalAliasLoopBody(node) {
-    const named = node.namedChildren || [];
+    const children = named(node);
     const body = field(node, "body");
 
     if (body) return body;
-    if (node.type === "do_statement") return named[0] || null;
+    if (node.type === "do_statement") return children[0] || null;
 
-    return named[named.length - 1] || null;
+    return children[children.length - 1] || null;
 }
 
 
@@ -709,14 +710,14 @@ function evalAliasLoopCondition(node) {
     if (condition) return condition;
 
     const body = evalAliasLoopBody(node);
-    const children = node.namedChildren || [];
+    const children = named(node) || [];
 
     return children.find(
         child => !evalAliasSameNode(child, body)
     ) || null;
 }
 function evalAliasTryParts(node) {
-    const children = node.namedChildren || [];
+    const children = named(node) || [];
 
     return {
         body: children.find(child => child.type === "statement_block") || null,
@@ -906,7 +907,7 @@ function evalAliasSwitchFallthroughVisible(eventNode, reference) {
         return false;
     }
 
-    const cases = (body.namedChildren || []).filter(
+    const cases = (named(body) || []).filter(
         child =>
             child.type === "switch_case" ||
             child.type === "switch_default"
@@ -917,7 +918,7 @@ function evalAliasSwitchFallthroughVisible(eventNode, reference) {
 
     if (sourceIndex < 0 || targetIndex <= sourceIndex) return false;
 
-    const sourceChildren = sourceCase.namedChildren || [];
+    const sourceChildren = named(sourceCase) || [];
     const sourceChild = evalAliasTopLevelChild(eventNode, sourceCase);
     const eventIndex = evalAliasNodeIndex(sourceChildren, sourceChild);
 
@@ -933,7 +934,7 @@ function evalAliasSwitchFallthroughVisible(eventNode, reference) {
 
     for (let i = sourceIndex + 1; i < targetIndex; i++) {
         if (
-            (cases[i].namedChildren || []).some(
+            (named(cases[i]) || []).some(
                 evalAliasSwitchExitStatement
             )
         ) {
@@ -988,7 +989,7 @@ function evalAliasTryCatchCanFlow(eventNode, reference) {
         return false;
     }
 
-    const statements = parts.body.namedChildren || [];
+    const statements = named(parts.body) || [];
     const sourceStatement = evalAliasTopLevelChild(
         eventNode,
         parts.body
@@ -1091,7 +1092,7 @@ function evalAliasValue(node, aliases) {
     let current = unwrapTypeOnly(node);
 
     while (current && current.type === "parenthesized_expression") {
-        current = unwrapTypeOnly((current.namedChildren || [])[0]);
+        current = unwrapTypeOnly((named(current) || [])[0]);
     }
 
     if (!current) return false;
@@ -1319,13 +1320,13 @@ function evalAliasControlResult(task, key, aliases) {
     }
 
     if (task.kind === "switch") {
-        const body = (node.namedChildren || []).find(
+        const body = (named(node) || []).find(
             child => child.type === "switch_body"
         );
 
         if (!body) return incoming;
 
-        const children = node.namedChildren || [];
+        const children = named(node) || [];
         const discriminant = children.find(child => !evalAliasSameNode(child, body));
         const baseline = discriminant
             ? evalAliasStateAtOffset(
@@ -1333,7 +1334,7 @@ function evalAliasControlResult(task, key, aliases) {
             )
             : incoming;
 
-        const branches = (body.namedChildren || []).filter(
+        const branches = (named(body) || []).filter(
             child =>
                 child.type === "switch_case" ||
                 child.type === "switch_default"
@@ -1422,7 +1423,7 @@ function evalAliasBindingsOf(root) {
 
             value = operator === "=" ? right : null;
         } else if (node.type === "update_expression") {
-            target = (node.namedChildren || []).find(
+            target = (named(node) || []).find(
                 child => child.type === "identifier"
             ) || null;
 
@@ -1559,7 +1560,7 @@ function evalAliasBindingsOf(root) {
         if (node.type !== "call_expression") return;
 
         const callee = unwrapTypeOnly(
-            field(node, "function") || (node.namedChildren || [])[0]
+            field(node, "function") || (named(node) || [])[0]
         );
 
         if (callee?.type !== "identifier") return;
@@ -1705,7 +1706,7 @@ function extractFromTree(ast) {
                     stringLiteral(constructorIndex) === "Function";
 
                 if (directFunction || globalFunction || computedGlobalFunction) {
-                    const evidence = "new " + text(constructor);
+                    const evidence = "new " + codeText(constructor);
                     facts.operations.dynamicEval = true;
                     calls.dynamic.add(evidence);
                     signal("dynamic_code", evidence, node);
@@ -1922,7 +1923,7 @@ function spawnBindingsOf(root, spec = SPAWN_BINDING_SPEC) {
             }
 
             if (node.type === "pair_pattern") {
-                const children = node.namedChildren || [];
+                const children = named(node) || [];
                 const value = children[children.length - 1];
                 const key = field(node, "key") || children[0];
                 const origin = key?.type === "string" ? stringLiteral(key) : key ? text(key) : null;
@@ -1949,9 +1950,9 @@ function spawnBindingsOf(root, spec = SPAWN_BINDING_SPEC) {
         const fn = unwrapTypeOnly(args(node)[0]);
         if (fn?.type !== "arrow_function" && fn?.type !== "function_expression") return;
         let param = field(fn, "parameter") ||
-            ((field(fn, "parameters")?.namedChildren || []).filter(c => c.type !== "comment")[0]);
+            ((named(field(fn, "parameters")) || []).filter(c => c.type !== "comment")[0]);
         if (param?.type === "required_parameter" || param?.type === "optional_parameter") {
-            param = field(param, "pattern") || (param.namedChildren || [])[0];
+            param = field(param, "pattern") || (named(param) || [])[0];
         }
         if (param?.type === "identifier" || param?.type === "object_pattern") {
             bindNames(param, source, fn);
@@ -1970,7 +1971,7 @@ function spawnBindingsOf(root, spec = SPAWN_BINDING_SPEC) {
 
             if (value?.type === "await_expression") {
                 value = unwrapTypeOnly(field(value, "argument") ||
-                    (value.namedChildren || [])[0]);
+                    (named(value) || [])[0]);
             }
 
             if (value?.type === "call_expression") {
@@ -2001,7 +2002,7 @@ function spawnBindingsOf(root, spec = SPAWN_BINDING_SPEC) {
             const scope = importScopeOf(node);
 
             if (requireClause) {
-                const local = (requireClause.namedChildren || []).find(child => child.type === "identifier");
+                const local = (named(requireClause) || []).find(child => child.type === "identifier");
                 if (local) bindModule(scope, text(local));
                 return;
             }
@@ -2021,7 +2022,7 @@ function spawnBindingsOf(root, spec = SPAWN_BINDING_SPEC) {
                     child.type === "import_clause"
                 ) {
                     const local = field(child, "name") ||
-                        (child.namedChildren || [])[0];
+                        (named(child) || [])[0];
 
                     if (local?.type === "identifier") bindModule(scope, text(local));
                 }
@@ -2052,7 +2053,7 @@ function spawnBindingsOf(root, spec = SPAWN_BINDING_SPEC) {
 
             if (value?.type === "await_expression") {
                 value = unwrapTypeOnly(field(value, "argument") ||
-                    (value.namedChildren || [])[0]);
+                    (named(value) || [])[0]);
             }
 
             if (!value) continue;
@@ -2129,8 +2130,8 @@ function spawnBindingsOf(root, spec = SPAWN_BINDING_SPEC) {
 function inlineModuleSource(node) {
     let base = unwrapTypeOnly(node);
     for (let i = 0; i < 8 && base; i++) {
-        if (base.type === "parenthesized_expression") base = unwrapTypeOnly((base.namedChildren || [])[0]);
-        else if (base.type === "await_expression") base = unwrapTypeOnly(field(base, "argument") || (base.namedChildren || [])[0]);
+        if (base.type === "parenthesized_expression") base = unwrapTypeOnly((named(base) || [])[0]);
+        else if (base.type === "await_expression") base = unwrapTypeOnly(field(base, "argument") || (named(base) || [])[0]);
         else break;
     }
     if (base?.type !== "call_expression") return null;
@@ -2220,12 +2221,12 @@ function isSpawnCall({ object, property, raw, callee }, host, spawnBindings) {
     return !SPAWN_ONLY_WHEN_BOUND.has(property);
 }
 function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings, fsBindings, netBindings, evalAliases, nativeBindings }) {
-    const callee = unwrapTypeOnly(field(node, "function") || (node.namedChildren || [])[0]);
+    const callee = unwrapTypeOnly(field(node, "function") || (named(node) || [])[0]);
     const { object, property, raw } = callTarget(node);
     const sequence = callee?.type === "parenthesized_expression"
-        ? (callee.namedChildren || []).find(child => child.type === "sequence_expression")
+        ? (named(callee) || []).find(child => child.type === "sequence_expression")
         : null;
-    const expressions = sequence?.namedChildren || [];
+    const expressions = named(sequence) || [];
     const indirectEvalName = expressions[expressions.length - 1];
     const indirectGlobalEval =
         indirectEvalName?.type === "identifier" &&
@@ -2387,13 +2388,20 @@ function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings,
     }
 }
 
+function isProcessEnv(node) {
+    const source = text(node);
+    if (source === "process.env") return true;
+    if (node.type !== "member_expression" || !source.startsWith("process") || source.length > 256) return false;
+    return withoutComments(node).replace(/\s+/g, "") === "process.env";
+}
+
 function visitMember(node, { facts, env, signal }) {
     // process.env.NAME
     const object = field(node, "object");
     const property = field(node, "property");
     if (!object || !property) return;
 
-    if (text(object) === "process.env") {
+    if (isProcessEnv(object)) {
         env.add(text(property));
         if (SECRETISH.test(text(property))) {
             signal("secret_access", `process.env.${text(property)}`, node);
@@ -2405,7 +2413,7 @@ function visitSubscript(node, { env, signal }) {
     // process.env["NAME"]
     const object = field(node, "object");
     const index = field(node, "index");
-    if (object && text(object) === "process.env") {
+    if (object && isProcessEnv(object)) {
         const name = stringLiteral(index);
         if (name) {
             env.add(name);
@@ -2421,16 +2429,16 @@ function visitAssignment(node, { exportsFound }) {
     const right = field(node, "right");
     if (!left) return;
 
-    const leftText = text(left).replace(/\s+/g, "");
+    const leftText = withoutComments(left).replace(/\s+/g, "");
 
     if (leftText === "module.exports" || leftText === "exports") {
         if (right && right.type === "object") {
-            for (const child of right.namedChildren || []) {
+            for (const child of named(right) || []) {
                 if (child.type === "shorthand_property_identifier") {
                     exportsFound.add(text(child));
                 } else if (child.type === "pair") {
                     const key = field(child, "key");
-                    if (key) exportsFound.add(text(key).replace(/["'`]/g, ""));
+                    if (key) exportsFound.add(key.type === "computed_property_name" ? codeText(key) : text(key).replace(/["'`]/g, ""));
                 }
             }
             return;
@@ -2442,8 +2450,8 @@ function visitAssignment(node, { exportsFound }) {
     }
 
     // module.exports.name = ... / exports.name = ...
-    const named = leftText.match(/^(?:module\.)?exports\.([A-Za-z_$][\w$]*)$/);
-    if (named) exportsFound.add(named[1]);
+    const exportName = leftText.match(/^(?:module\.)?exports\.([A-Za-z_$][\w$]*)$/);
+    if (exportName) exportsFound.add(exportName[1]);
 }
 
 function visitExport(node, { exportsFound }) {
@@ -2454,7 +2462,7 @@ function visitExport(node, { exportsFound }) {
 
     // TypeScript `export = name`, the counterpart of `module.exports = name`.
     if (node.children?.some(child => child.type === "=" && !child.isNamed)) {
-        const value = (node.namedChildren || [])[0];
+        const value = (named(node) || [])[0];
         exportsFound.add(value?.type === "identifier" ? text(value) : "default");
         return;
     }
@@ -2462,7 +2470,7 @@ function visitExport(node, { exportsFound }) {
     let declaration = field(node, "declaration");
     // `export declare const x: T`
     if (declaration?.type === "ambient_declaration") {
-        declaration = (declaration.namedChildren || [])[0] || null;
+        declaration = (named(declaration) || [])[0] || null;
     }
     if (declaration) {
         const name = field(declaration, "name");
@@ -2470,16 +2478,16 @@ function visitExport(node, { exportsFound }) {
             exportsFound.add(text(name));
             return;
         }
-        for (const child of declaration.namedChildren || []) {
+        for (const child of named(declaration) || []) {
             const declaredName = field(child, "name");
-            if (declaredName) exportsFound.add(text(declaredName));
+            if (declaredName) exportsFound.add(declaredName.type === "identifier" ? text(declaredName) : codeText(declaredName));
         }
         return;
     }
 
-    for (const child of node.namedChildren || []) {
+    for (const child of named(node) || []) {
         if (child.type === "export_clause") {
-            for (const spec of child.namedChildren || []) {
+            for (const spec of named(child) || []) {
                 const name = field(spec, "name");
                 if (name) exportsFound.add(text(name));
             }
@@ -2498,7 +2506,7 @@ function visitComparison(node, { facts, signal }) {
 
     if (sides.some(side => SECRETISH.test(side))) {
         facts.operations.secretComparison = true;
-        signal("secret_comparison", `${sides[0]} ${operatorText} ${sides[1]}`.slice(0, 80), node);
+        signal("secret_comparison", `${codeText(left)} ${operatorText} ${codeText(right)}`.slice(0, 80), node);
     }
 }
 
@@ -2598,7 +2606,7 @@ function nativeBindingsOf(root) {
         if (node.type === "variable_declarator") {
             let value = unwrapTypeOnly(field(node, "value"));
             if (value?.type === "await_expression") {
-                value = unwrapTypeOnly(field(value, "argument") || (value.namedChildren || [])[0]);
+                value = unwrapTypeOnly(field(value, "argument") || (named(value) || [])[0]);
             }
             if (value && PROCESS_OBJECTS.has(text(value))) {
                 bind(field(node, "name"), "process");
@@ -2613,7 +2621,7 @@ function nativeBindingsOf(root) {
             const source = normalise(stringLiteral(field(requireClause || node, "source")));
             if (!source) return;
             if (requireClause) {
-                bind((requireClause.namedChildren || []).find(child => child.type === "identifier"), source);
+                bind((named(requireClause) || []).find(child => child.type === "identifier"), source);
                 return;
             }
             walk(node, child => {
@@ -2621,7 +2629,7 @@ function nativeBindingsOf(root) {
                     const name = field(child, "name");
                     member(field(child, "alias") || name, source, name && text(name));
                 } else if (child.type === "namespace_import" || child.type === "import_clause") {
-                    const id = (child.namedChildren || []).find(c => c.type === "identifier");
+                    const id = (named(child) || []).find(c => c.type === "identifier");
                     if (id) set(id, source);
                 }
             });

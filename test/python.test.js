@@ -184,7 +184,7 @@ def check(token, sig):
         'crypto_use:hashlib.sha256',
         'secret_access:os.environ.API_TOKEN',
         'secret_comparison:hmac.compare_digest',
-        'secret_comparison:token == os.environ["API_TOKEN"]'
+        'secret_comparison:token == os.environ["…"]'
     ]);
 });
 

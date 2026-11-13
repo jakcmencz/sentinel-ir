@@ -11,6 +11,7 @@
  */
 
 const TreeParser = require("./tree-parser");
+const { named, codeText } = require("./ir-text");
 const { emptyFacts, dangerousOf } = require("./ast-facts");
 
 const SECRETISH = /(token|secret|signature|api[_-]?key|apikey|password|passwd|credential|auth|hmac|digest)/i;
@@ -155,14 +156,14 @@ function field(node, name) {
 
 function walk(node, visit) {
     visit(node);
-    for (const child of node.namedChildren) walk(child, visit);
+    for (const child of named(node)) walk(child, visit);
 }
 
 // Content of a plain string literal; f-strings and concatenations are not literals.
 function stringLiteral(node) {
     if (!node || node.type !== "string") return null;
-    if (node.namedChildren.some(child => child.type === "interpolation")) return null;
-    return node.namedChildren
+    if (named(node).some(child => child.type === "interpolation")) return null;
+    return named(node)
         .filter(child => child.type === "string_content")
         .map(child => child.text)
         .join("");
@@ -208,7 +209,7 @@ function collectBindings(root) {
             return;
         }
         if (["pattern_list", "tuple_pattern", "list_pattern", "tuple", "list", "list_splat_pattern"].includes(target.type)) {
-            for (const child of target.namedChildren) bindTarget(child, scope, null);
+            for (const child of named(target)) bindTarget(child, scope, null);
         }
     };
 
@@ -217,9 +218,9 @@ function collectBindings(root) {
     walk(root, node => {
         switch (node.type) {
             case "import_statement":
-                for (const name of node.namedChildren) {
+                for (const name of named(node)) {
                     if (name.type === "dotted_name") {
-                        const first = name.namedChildren[0].text;
+                        const first = named(name)[0].text;
                         add(bindingScopeOf(node), first, { kind: "import", q: first });
                     } else if (name.type === "aliased_import") {
                         add(bindingScopeOf(node), text(field(name, "alias")), { kind: "import", q: text(field(name, "name")) });
@@ -229,7 +230,7 @@ function collectBindings(root) {
             case "import_from_statement": {
                 const source = field(node, "module_name");
                 const base = moduleName(source);
-                for (const name of node.namedChildren) {
+                for (const name of named(node)) {
                     if (name.id === source?.id) continue;
                     if (name.type === "wildcard_import") stars.push(base);
                     if (name.type === "dotted_name") {
@@ -245,15 +246,15 @@ function collectBindings(root) {
                 const name = field(node, "name");
                 if (name) add(scopeOf(node), name.text, { kind: "other" });
                 if (node.type === "function_definition") {
-                    for (const param of field(node, "parameters")?.namedChildren || []) {
-                        const id = param.type === "identifier" ? param : (field(param, "name") || param.namedChildren.find(c => c.type === "identifier"));
+                    for (const param of named(field(node, "parameters")) || []) {
+                        const id = param.type === "identifier" ? param : (field(param, "name") || named(param).find(c => c.type === "identifier"));
                         if (id?.type === "identifier") add(node, id.text, { kind: "other" });
                     }
                 }
                 break;
             }
             case "lambda":
-                for (const param of field(node, "parameters")?.namedChildren || []) {
+                for (const param of named(field(node, "parameters")) || []) {
                     const id = param.type === "identifier" ? param : field(param, "name");
                     if (id?.type === "identifier") add(node, id.text, { kind: "other" });
                 }
@@ -276,8 +277,8 @@ function collectBindings(root) {
                 break;
             case "as_pattern": {
                 const alias = field(node, "alias");
-                const target = alias?.namedChildren.find(c => c.type === "identifier") || (alias?.type === "identifier" ? alias : null);
-                const value = node.namedChildren[0];
+                const target = named(alias).find(c => c.type === "identifier") || (alias?.type === "identifier" ? alias : null);
+                const value = named(node)[0];
                 const inWith = node.parent?.type === "with_item";
                 if (target) add(scopeOf(node), target.text, inWith && value ? { kind: "alias", value } : { kind: "other" });
                 break;
@@ -404,7 +405,7 @@ function createResolver(root) {
                 break;
             case "parenthesized_expression":
             case "await":
-                for (const q of resolve(node.namedChildren[0], depth + 1)) out.add(q);
+                for (const q of resolve(named(node)[0], depth + 1)) out.add(q);
                 break;
             default:
                 break;
@@ -418,7 +419,7 @@ function createResolver(root) {
 function callArguments(call) {
     const positional = [];
     const keywords = new Map();
-    for (const arg of field(call, "arguments")?.namedChildren || []) {
+    for (const arg of named(field(call, "arguments")) || []) {
         if (arg.type === "keyword_argument") keywords.set(text(field(arg, "name")), field(arg, "value"));
         else if (arg.type !== "comment") positional.push(arg);
     }
@@ -485,7 +486,7 @@ function extractFrom(ast) {
     };
 
     const visitRoute = (decorator) => {
-        const call = decorator.namedChildren[0];
+        const call = named(decorator)[0];
         if (call?.type !== "call") return;
         const callee = field(call, "function");
         if (callee?.type !== "attribute") return;
@@ -501,13 +502,13 @@ function extractFrom(ast) {
         let verbs = method === "route" || method === "api_route" ? ["GET"] : [method.toUpperCase()];
         const listed = keywords.get("methods");
         if (listed && (listed.type === "list" || listed.type === "tuple")) {
-            const names = listed.namedChildren.map(stringLiteral).filter(Boolean).map(v => v.toUpperCase());
+            const names = named(listed).map(stringLiteral).filter(Boolean).map(v => v.toUpperCase());
             if (names.length > 0) verbs = names;
         }
         for (const verb of verbs) routes.add(`${verb} ${routePath}`);
         ops.inboundHttp = true;
-        calls.network.add(`${text(host)}.${method}`);
-        signal("inbound_http", `${text(host)}.${method}`, decorator);
+        calls.network.add(`${codeText(host)}.${method}`);
+        signal("inbound_http", `${codeText(host)}.${method}`, decorator);
     };
 
     const usesCtypes = () => [...imports].some(m => m === "ctypes" || m === "_ctypes" || m.startsWith("ctypes."));
@@ -519,8 +520,8 @@ function extractFrom(ast) {
         if (fn?.type === "attribute" && text(field(fn, "attribute")) === "from_address" &&
             resolve(fn).size === 0 && usesCtypes()) {
             ops.nativeCode = true;
-            calls.dynamic.add(`${text(field(fn, "object"))}.from_address`);
-            signal("native_code", `${text(field(fn, "object"))}.from_address`, call);
+            calls.dynamic.add(`${codeText(field(fn, "object"))}.from_address`);
+            signal("native_code", `${codeText(field(fn, "object"))}.from_address`, call);
         }
         for (const q of resolve(field(call, "function"))) {
             const dot = q.lastIndexOf(".");
@@ -598,7 +599,7 @@ function extractFrom(ast) {
     walk(root, node => {
         switch (node.type) {
             case "import_statement":
-                for (const name of node.namedChildren) {
+                for (const name of named(node)) {
                     imports.add(text(name.type === "aliased_import" ? field(name, "name") : name));
                     visitImport(text(name.type === "aliased_import" ? field(name, "name") : name), node);
                 }
@@ -622,7 +623,7 @@ function extractFrom(ast) {
                 const index = field(node, "subscript");
                 const pointer = [...resolve(value)].find(q => POINTER_RESULT.test(q));
                 if (pointer && text(index) !== "0") {
-                    const evidence = `${pointer}[${text(index).slice(0, 20)}]`;
+                    const evidence = `${pointer}[${codeText(index).slice(0, 20)}]`;
                     ops.nativeCode = true;
                     calls.dynamic.add(evidence);
                     signal("native_code", evidence, node);
@@ -636,10 +637,10 @@ function extractFrom(ast) {
             case "comparison_operator": {
                 const operators = node.children.filter(c => !c.isNamed).map(c => c.type);
                 if (!operators.some(op => op === "==" || op === "!=")) break;
-                const sides = node.namedChildren.map(text);
+                const sides = named(node).map(text);
                 if (sides.some(side => SECRETISH.test(side))) {
                     ops.secretComparison = true;
-                    signal("secret_comparison", text(node).replace(/\s+/g, " ").slice(0, 80), node);
+                    signal("secret_comparison", codeText(node).slice(0, 80), node);
                 }
                 break;
             }
@@ -669,17 +670,17 @@ function extractFrom(ast) {
 function exportsOf(root) {
     const names = new Set();
     let explicit = null;
-    for (const statement of root.namedChildren) {
+    for (const statement of named(root)) {
         const definition = statement.type === "decorated_definition" ? field(statement, "definition") : statement;
         if (definition && (definition.type === "function_definition" || definition.type === "class_definition")) {
             const name = text(field(definition, "name"));
             if (name && !name.startsWith("_")) names.add(name);
         }
-        const assignment = statement.type === "expression_statement" ? statement.namedChildren[0] : null;
+        const assignment = statement.type === "expression_statement" ? named(statement)[0] : null;
         if (assignment?.type === "assignment" && text(field(assignment, "left")) === "__all__") {
             const right = field(assignment, "right");
             if (right && (right.type === "list" || right.type === "tuple")) {
-                explicit = right.namedChildren.map(stringLiteral).filter(v => v !== null);
+                explicit = named(right).map(stringLiteral).filter(v => v !== null);
             }
         }
     }

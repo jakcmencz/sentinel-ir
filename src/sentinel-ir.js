@@ -28,6 +28,7 @@
 
 const AstFacts = require("./ast-facts");
 const TreeParser = require("./tree-parser");
+const { boundFacts } = require("./ir-text");
 const PythonFacts = require("./python-facts");
 const RustFacts = require("./rust-facts");
 
@@ -285,16 +286,28 @@ function compressFacts(facts) {
     return compressed;
 }
 
-function analyze(content, options = {}) {
-    const opts = readOptions(options);
-    const facts = opts.supported
-        ? (opts.language === "python" ? PythonFacts.extract(content)
-            : opts.language === "rust" ? RustFacts.extract(content, { target: opts.target })
-                : AstFacts.extract(content, opts.language))
-        : {
+// Code nested thousands of levels deep overflows the stack of the recursive
+// extractors; it gets the same text-heuristic IR as a file that did not parse.
+function extractFacts(content, opts) {
+    if (!opts.supported) {
+        return {
             ...AstFacts.emptyFacts(),
             error: `unsupported language: ${opts.language} (supported: ${LANGUAGES.join(", ")})`
         };
+    }
+    try {
+        return opts.language === "python" ? PythonFacts.extract(content)
+            : opts.language === "rust" ? RustFacts.extract(content, { target: opts.target })
+                : AstFacts.extract(content, opts.language);
+    } catch (error) {
+        if (!(error instanceof RangeError)) throw error;
+        return { ...AstFacts.emptyFacts(), error: "source is nested too deeply to analyze" };
+    }
+}
+
+function analyze(content, options = {}) {
+    const opts = readOptions(options);
+    const facts = boundFacts(extractFacts(content, opts));
 
     return {
         target: opts.target,
