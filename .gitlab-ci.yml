@@ -42,6 +42,11 @@ verify_attestations:
         - scripts/verify-attestations.js
         - .gitlab-ci.yml
   script:
+    - |
+      for v in 0.5.0 0.5.1 0.5.2; do
+        curl -s -D - -o /tmp/a.json -H 'cache-control: no-cache' "https://registry.npmjs.org/-/npm/v1/attestations/sentinel-ir@$v" | grep -iE '^(cf-ray|cf-cache-status|age|last-modified|etag)'
+        node -e 'console.log(process.argv[1], JSON.parse(require("fs").readFileSync("/tmp/a.json")).attestations.map(a => a.predicateType))' $v
+      done
     - ATTEST_TIMEOUT_MS=120000 node scripts/verify-attestations.js "$(npm view sentinel-ir@latest version)"
     - |
       if out=$(ATTEST_TIMEOUT_MS=0 node scripts/verify-attestations.js 0.5.1 2>&1); then
