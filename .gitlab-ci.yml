@@ -45,3 +45,4 @@ publish:
     - test "v$(node -p 'require("./package.json").version')" = "$CI_COMMIT_TAG"
     - echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
     - npm publish --provenance --access public
+    - node scripts/verify-attestations.js
