@@ -297,7 +297,7 @@ regardless of the target platform.
   macro arguments, where syn does not look. All 4,857 files syn finds `unsafe`
   in are flagged.
 - **49 labeled snippets** in `test/fixtures/rust-labeled.js`, the syntax
-  cases in `test/rust-grammar.test.js`, plus 2,954 randomly broken real files
+  cases in `test/rust-grammar.test.js`, plus 2,950 randomly broken real files
   that never crash and never report a dangerous operation from an incomplete
   parse.
 
