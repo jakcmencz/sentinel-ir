@@ -65,6 +65,15 @@ function npx(args, dir) {
     });
 }
 
+function isolate(dir) {
+    const nm = path.join(dir, "node_modules"), [top, sub] = name.split("/");
+    const rm = p => fs.rmSync(p, { recursive: true, force: true });
+    for (const e of fs.readdirSync(nm)) if (e !== top) rm(path.join(nm, e));
+    if (sub) for (const e of fs.readdirSync(path.join(nm, top))) if (e !== sub) rm(path.join(nm, top, e));
+    rm(path.join(nm, name, "node_modules"));
+    rm(path.join(dir, "package-lock.json"));
+}
+
 async function audit(npm) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "verify-"));
     const run = args => npx(["-y", `npm@${npm}`, ...args, "--cache", path.join(dir, ".npm-cache"), "--prefer-online"], dir);
@@ -73,11 +82,13 @@ async function audit(npm) {
         await run(["install", "--ignore-scripts", "--no-audit", "--no-fund", `${name}@${version}`]);
         const installed = JSON.parse(fs.readFileSync(path.join(dir, "node_modules", name, "package.json"), "utf8")).version;
         if (installed !== version) throw new Error(`installed ${installed}, expected ${version}`);
-        // The summary line also counts dependencies, so on npm 11 (the only one
-        // that lists verified packages) require this exact package in the list.
+        // npm's summary also counts dependencies, so audit a tree that holds
+        // only this package; npm 11 additionally has to list it as verified.
+        isolate(dir);
         if (npm === "10") {
             const out = await run(["audit", "signatures"]);
-            if (!/verified attestation/.test(out)) throw new Error(`no verified attestations reported: ${out.trim() || "(no output)"}`);
+            if (!/^audited 1 package\b/m.test(out) || !/^1 package has a verified attestation$/m.test(out))
+                throw new Error(`no verified attestation for ${name}@${version}: ${out.trim() || "(no output)"}`);
         } else {
             const out = await run(["audit", "signatures", "--json", "--include-attestations"]);
             let verified;
