@@ -29,6 +29,26 @@ python_recall:
     - test "$(git -C /tmp/bandit rev-parse HEAD)" = "2d0b675b04c80ae42277e10500db06a0a37bae17"
     - node scripts/python-recall.js /tmp/bandit/examples
 
+# Exercise the post-publish verifier against already-published versions
+# whenever it changes: a good release must pass, 0.5.1 (no npm publish
+# attestation) must fail. Same image as publish, nothing is published.
+verify_attestations:
+  stage: test
+  image: node:24
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - changes:
+        - scripts/verify-attestations.js
+        - .gitlab-ci.yml
+  script:
+    - ATTEST_TIMEOUT_MS=120000 node scripts/verify-attestations.js "$(npm view sentinel-ir@latest version)"
+    - |
+      if out=$(ATTEST_TIMEOUT_MS=0 node scripts/verify-attestations.js 0.5.1 2>&1); then
+        echo "verifier accepted 0.5.1: $out"; exit 1
+      fi
+      echo "$out" | grep -F "missing attestation(s): https://github.com/npm/attestation/tree/main/specs/publish/v0.1"
+
 # Release: push a protected tag vX.Y.Z matching package.json "version".
 # NPM_TOKEN is a masked, protected CI/CD variable; protected tags only.
 publish:
