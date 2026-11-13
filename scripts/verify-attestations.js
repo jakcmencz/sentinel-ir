@@ -28,12 +28,26 @@ async function attestations() {
     return missing.length ? `missing attestation(s): ${missing.join(", ")}` : null;
 }
 
-// npx runs in its own process group so a hung npm and its children are all killed.
-function npx(args, cwd) {
+// npx runs in its own process group so a hung npm and its children are all
+// killed, on timeout and when this job is cancelled.
+let active = null;
+for (const [sig, code] of [["SIGINT", 130], ["SIGTERM", 143]]) {
+    process.on(sig, () => {
+        if (active) {
+            try { process.kill(-active.pid, "SIGKILL"); } catch {}
+            fs.rmSync(active.dir, { recursive: true, force: true });
+        }
+        process.exit(code);
+    });
+}
+
+function npx(args, dir) {
     return new Promise((resolve, reject) => {
-        const child = spawn("npx", args, { cwd, detached: true, stdio: ["ignore", "ignore", "pipe"] });
-        let stderr = "";
-        child.stderr.on("data", d => { stderr = (stderr + d).slice(-4000); });
+        const child = spawn("npx", args, { cwd: dir, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+        active = { pid: child.pid, dir };
+        let out = "", err = "";
+        child.stdout.on("data", d => { out = (out + d).slice(-4000); });
+        child.stderr.on("data", d => { err = (err + d).slice(-4000); });
         const timer = setTimeout(() => {
             try { process.kill(-child.pid, "SIGKILL"); } catch {}
             reject(new Error(`timed out after ${STEP_MS / 1000}s`));
@@ -41,7 +55,7 @@ function npx(args, cwd) {
         child.on("error", e => { clearTimeout(timer); reject(e); });
         child.on("close", code => {
             clearTimeout(timer);
-            code === 0 ? resolve() : reject(new Error(stderr || `exit code ${code}`));
+            code === 0 ? resolve(out) : reject(new Error(`${out}\n${err}`.trim() || `exit code ${code}`));
         });
     });
 }
@@ -52,12 +66,16 @@ async function audit(npm) {
     try {
         fs.writeFileSync(path.join(dir, "package.json"), "{}");
         await run(["install", "--ignore-scripts", "--no-audit", "--no-fund", `${name}@${version}`]);
-        await run(["audit", "signatures"]);
+        const installed = JSON.parse(fs.readFileSync(path.join(dir, "node_modules", name, "package.json"), "utf8")).version;
+        if (installed !== version) throw new Error(`installed ${installed}, expected ${version}`);
+        const out = await run(["audit", "signatures"]);
+        if (!/verified attestation/.test(out)) throw new Error(`no verified attestations reported: ${out.trim() || "(no output)"}`);
         return null;
     } catch (e) {
         const lines = e.message.split("\n").filter(l => l.trim() && !l.includes("complete log"));
         return `npm ${npm} audit signatures: ${lines.slice(-2).join(" | ")}`;
     } finally {
+        active = null;
         fs.rmSync(dir, { recursive: true, force: true });
     }
 }
