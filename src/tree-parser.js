@@ -2,8 +2,10 @@
 
 const path = require("path");
 
-const DIRECT_INPUT_LIMIT = 32 * 1024;
-const CHUNK_SIZE = 8 * 1024;
+// web-tree-sitter copies at most 5119 UTF-16 code units per input chunk, so
+// chunks stay below that and never end between the halves of a surrogate pair.
+const DIRECT_INPUT_LIMIT = 4 * 1024;
+const CHUNK_SIZE = 4 * 1024;
 
 // Bundled WebAssembly grammars, one per supported language id.
 const WASM_GRAMMARS = Object.freeze({
@@ -227,11 +229,13 @@ const TreeParser = {
             return parser.parse(content);
         }
 
-        return parser.parse(index =>
-            index < content.length
-                ? content.slice(index, index + CHUNK_SIZE)
-                : null
-        );
+        return parser.parse(index => {
+            if (index >= content.length) return null;
+            let end = Math.min(index + CHUNK_SIZE, content.length);
+            const last = content.charCodeAt(end - 1);
+            if (last >= 0xD800 && last <= 0xDBFF && end < content.length) end--;
+            return content.slice(index, end);
+        });
     },
 
     parserFor(language) {

@@ -17,8 +17,10 @@ tree-sitter-python@0.25.0 (https://github.com/tree-sitter/tree-sitter-python),
 Copyright (c) 2016 Max Brunsfeld, MIT License; see
 wasm/LICENSE-tree-sitter-python.
 
-wasm/tree-sitter-rust.wasm is copied unmodified from the v0.24.2 release of
-tree-sitter-rust (https://github.com/tree-sitter/tree-sitter-rust/releases/tag/v0.24.2,
-SHA-256 24c89bd9252255e4aebbcbd7d2d308bd92c86dd95a130fdc80efa49577b8d738),
+wasm/tree-sitter-rust.wasm is built from a modified copy of the v0.24.2 release
+of tree-sitter-rust (https://github.com/tree-sitter/tree-sitter-rust/releases/tag/v0.24.2),
 Copyright (c) 2017 Maxim Sokolov, MIT License; see
-wasm/LICENSE-tree-sitter-rust.
+wasm/LICENSE-tree-sitter-rust. The modifications (newer and unstable Rust
+syntax, wasm-bindgen extern types) are in scripts/rust-grammar/patch-grammar.py
+and scripts/rust-grammar/build.sh rebuilds the file reproducibly (SHA-256
+0bc844e255f476423f2dd1dc22e3f44cc9a16c60f3e62d2c5c97a44bc681b0ae).

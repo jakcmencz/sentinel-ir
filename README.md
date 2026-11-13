@@ -22,7 +22,7 @@ an LLM instead of the raw file.
 | `typescript` | `tree-sitter-typescript` 0.23.2 | `.ts` `.mts` `.cts` (incl. `.d.ts`) |
 | `tsx` | `tree-sitter-tsx` 0.23.2 | `.tsx` |
 | `python` (alias `py`) | `tree-sitter-python` 0.25.0 | `.py` `.pyi` |
-| `rust` (alias `rs`) | `tree-sitter-rust` 0.24.2 | `.rs` |
+| `rust` (alias `rs`) | `tree-sitter-rust` 0.24.2, patched (see [Rust](#rust)) | `.rs` |
 
 Other languages are not supported. An explicit unsupported `language`
 (e.g. `"ruby"`) is reported as `analysisStatus: "incomplete"` instead of
@@ -139,7 +139,7 @@ initializeWasm().catch((error) => {
 
 Only the JavaScript grammar is loaded by default. The TypeScript and TSX
 grammars (about 1.4 MB each, uncompressed), the Python grammar (about
-0.46 MB) and the Rust grammar (about 1.1 MB) are loaded on first use by
+0.46 MB) and the Rust grammar (about 1.4 MB) are loaded on first use by
 `analyzeAsync()`, or up front with
 `initializeWasm({ languages: ["typescript", "tsx", "python", "rust"] })`.
 
@@ -245,7 +245,8 @@ declarations (including `as` aliases, `{...}` lists, `self` and `*` globs) and
 
 Rust also has code that runs while it is being compiled, which is a common way
 to attack through a dependency: a `target` named `build.rs` adds a
-`build_script` signal, and `#[proc_macro]`, `#[proc_macro_derive]` and
+`build_script` signal (not `src/build.rs`, `tests/build.rs`, `examples/build.rs`
+or `benches/build.rs`, which are a module and test targets), and `#[proc_macro]`, `#[proc_macro_derive]` and
 `#[proc_macro_attribute]` add a `compile_time_code` signal. Neither changes
 the risk on its own; what the code does (for example `Command::new` in
 `build.rs`) does.
@@ -253,11 +254,23 @@ the risk on its own; what the code does (for example `Command::new` in
 Exports are top-level items marked plain `pub` (not `pub(crate)`), names
 re-exported with `pub use` and `#[macro_export]` macros.
 
-**Macros.** A macro call's arguments and a `macro_rules!` body are token
-trees, not syntax. Paths called inside them (`println!("{:?}", Command::new("id"))`)
-and `unsafe { }` inside them are still found, but what a macro expands to is
+**Macros.** A macro call's arguments, a `macro_rules!` body and a `macro`
+2.0 body are token trees, not syntax. Paths called inside them
+(`println!("{:?}", Command::new("id"))`), `env::var("NAME")` names and
+`unsafe { }` inside them are still found, but what a macro expands to is
 not: a call that only exists after expansion, or a procedural macro's output,
-is not reported.
+is not reported. Seeing that needs the Rust compiler (`cargo expand`), which a
+source-only analyzer does not run.
+
+**Grammar.** The bundled grammar is tree-sitter-rust v0.24.2 with a patch
+(`scripts/rust-grammar/patch-grammar.py`; `scripts/rust-grammar/build.sh`
+rebuilds the same file byte for byte) for syntax the release rejects:
+wasm-bindgen `pub type X;` in `extern` blocks (all of `web-sys` and `js-sys`),
+`safe fn` / `safe static`, `safe` and `auto` as names, `const impl`,
+`const trait`, `[const]` / `~const` bounds, trait aliases, `macro` 2.0,
+negative const generic arguments, `f16` / `f128`, `super let`, `const`
+closures, attributes on expressions, `Type::<T>` in types, `fn(&_)` and
+edition-2015 `try!`.
 
 Not covered: method calls on values whose type is not visible (`cmd.spawn()`
 on a `Command` from another function is covered only by its `Command::new`),
@@ -267,23 +280,26 @@ regardless of the target platform.
 
 ### Measured (0.5.0)
 
-- **`unsafe` against syn:** on the 9,507 files of 273 crates from crates.io
-  that parsed (the `tokio`, `reqwest`, `axum`, `actix-web`, `nix`, `libc`,
-  `libloading`, `ring`, ... dependency tree), every `unsafe fn` (6,137),
-  `unsafe impl` (2,255), `unsafe trait` (96) and `extern` block (946) that
+- **Parsing:** all 15,238 `.rs` files of 424 crate versions from crates.io (the
+  `tokio`, `reqwest`, `axum`, `actix-web`, `nix`, `libc`, `libloading`, `ring`,
+  `web-sys`, `js-sys`, ... dependency tree) and all 2,874 files of the Rust
+  standard library's own sources parse completely. With the unpatched v0.24.2
+  grammar it was 13,693 (1,476 of the missing ones were generated `web-sys` /
+  `js-sys` bindings) and 2,724 (the rest used unstable syntax). On the files
+  both grammars parse, the facts are identical.
+- **`unsafe` against syn:** on the 15,237 files that
   [syn](https://crates.io/crates/syn), the parser behind `cargo-geiger`,
-  counts is reported, with no extra ones. `unsafe` blocks: 27,812 against
-  syn's 26,738; the 1,074 extra are inside macro bodies and macro arguments,
-  where syn does not look. All 2,445 files syn finds `unsafe` in are flagged.
-- **Coverage:** 99.6 % of those crates' files parse cleanly, excluding the 1,477
-  generated `web-sys` / `js-sys` binding files, which use `extern` types
-  (`pub type X;` inside `extern "C"`, unstable outside `wasm-bindgen`) that
-  the grammar does not accept; those files are `incomplete`. Of the Rust
-  standard library's own sources, 94.8 % parse; the rest use unstable syntax
-  (`const trait`, `macro` 2.0).
-- **49 labeled snippets** in `test/fixtures/rust-labeled.js`, plus 3,000
-  randomly broken real files that never crash and never report a dangerous
-  operation from an incomplete parse.
+  parses, every `unsafe impl` (2,839), `unsafe trait` (160) and `extern` block
+  (6,266) it counts is reported, with no extra ones, and every `unsafe fn`
+  (10,137); the 12 extra `unsafe fn` are declared inside wasm-bindgen
+  `extern` blocks, which the syn counter does not visit. `unsafe` blocks:
+  37,167 against syn's 35,428; the extra ones are inside macro bodies and
+  macro arguments, where syn does not look. All 4,857 files syn finds `unsafe`
+  in are flagged.
+- **49 labeled snippets** in `test/fixtures/rust-labeled.js`, the syntax
+  cases in `test/rust-grammar.test.js`, plus 2,954 randomly broken real files
+  that never crash and never report a dangerous operation from an incomplete
+  parse.
 
 ## Native code
 

@@ -320,7 +320,8 @@ function extractFrom(ast, options) {
     }
 
     const target = typeof options.target === "string" ? options.target : "";
-    if (/(^|[\\/])build\.rs$/i.test(target)) signal("build_script", "build.rs runs on the build machine at compile time", root);
+    // src/build.rs is a module and tests/build.rs an integration test, not a Cargo build script.
+    if (/(^|[\\/])build\.rs$/i.test(target) && !/(^|[\\/])(src|tests|examples|benches)[\\/]build\.rs$/i.test(target)) signal("build_script", "build.rs runs on the build machine at compile time", root);
 
     const addEnv = (name, evidence, node) => {
         env.add(name);
@@ -472,7 +473,7 @@ function extractFrom(ast, options) {
             }
             const next = children[j + 1];
             if (next?.type === "token_tree" && next.child(0)?.type === "(") {
-                visitCall(resolver.resolve(segments), child, next);
+                visitCall(resolver.resolve(segments), child, next.namedChildren[0] || null);
             } else if (next?.type === "!" && children[j + 2]?.type === "token_tree") {
                 visitMacro(segments, children[j + 2], child);
             }
@@ -568,6 +569,9 @@ function extractFrom(ast, options) {
                     if (right) scanTokens(right);
                 }
                 break;
+            case "macro_2_definition":
+                scanTokens(node);
+                break;
             case "unsafe_block":
                 native("unsafe {}", node);
                 break;
@@ -630,7 +634,7 @@ function extractFrom(ast, options) {
 
 const EXPORTED_ITEMS = new Set([
     "function_item", "struct_item", "enum_item", "union_item", "trait_item", "type_item",
-    "const_item", "static_item", "mod_item"
+    "const_item", "static_item", "mod_item", "trait_alias_item", "macro_2_definition"
 ]);
 
 // Top-level items marked plain `pub` (not pub(crate)), `pub use` names and

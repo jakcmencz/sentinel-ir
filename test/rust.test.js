@@ -102,6 +102,8 @@ test('build.rs and proc macros are marked as code that runs at compile time', as
     assert.ok(signals(build).some(s => s.startsWith('build_script:')));
     assert.ok(!signals(await rs('fn main() {}', 'src/main.rs')).some(s => s.startsWith('build_script:')));
     assert.ok(!signals(await rs('fn main() {}', 'src/rebuild.rs')).some(s => s.startsWith('build_script:')));
+    for (const target of ['build.rs', 'C:\\work\\crate\\build.rs', 'crates/x/build/build.rs']) assert.ok(signals(await rs('fn main() {}', target)).some(s => s.startsWith('build_script:')), target);
+    for (const target of ['src/build.rs', 'crates/x/src/build.rs', 'tests/build.rs', 'examples\\build.rs', 'benches/build.rs']) assert.ok(!signals(await rs('fn f() {}', target)).some(s => s.startsWith('build_script:')), target);
 
     const proc = await rs('#[proc_macro_derive(Thing)]\npub fn derive(input: TokenStream) -> TokenStream { input }');
     assert.deepEqual(signals(proc), ['compile_time_code:#[proc_macro_derive]']);
