@@ -2,7 +2,7 @@
 
 Structural IR for AI reasoning over code.
 
-`sentinel-ir` turns a JavaScript, TypeScript or Python source file into a small, structural JSON
+`sentinel-ir` turns a JavaScript, TypeScript, Python or Rust source file into a small, structural JSON
 description — routes, exports, imports, environment reads, network /
 filesystem / process / crypto calls, dangerous syntax and a risk level — built
 from the [tree-sitter](https://tree-sitter.github.io/) AST. You send that IR to
@@ -22,6 +22,7 @@ an LLM instead of the raw file.
 | `typescript` | `tree-sitter-typescript` 0.23.2 | `.ts` `.mts` `.cts` (incl. `.d.ts`) |
 | `tsx` | `tree-sitter-tsx` 0.23.2 | `.tsx` |
 | `python` (alias `py`) | `tree-sitter-python` 0.25.0 | `.py` `.pyi` |
+| `rust` (alias `rs`) | `tree-sitter-rust` 0.24.2, patched (see [Rust](#rust)) | `.rs` |
 
 Other languages are not supported. An explicit unsupported `language`
 (e.g. `"ruby"`) is reported as `analysisStatus: "incomplete"` instead of
@@ -137,9 +138,10 @@ initializeWasm().catch((error) => {
 ```
 
 Only the JavaScript grammar is loaded by default. The TypeScript and TSX
-grammars (about 1.4 MB each, uncompressed) and the Python grammar (about
-0.46 MB) are loaded on first use by `analyzeAsync()`, or up front with
-`initializeWasm({ languages: ["typescript", "tsx", "python"] })`.
+grammars (about 1.4 MB each, uncompressed), the Python grammar (about
+0.46 MB) and the Rust grammar (about 1.4 MB) are loaded on first use by
+`analyzeAsync()`, or up front with
+`initializeWasm({ languages: ["typescript", "tsx", "python", "rust"] })`.
 
 ## TypeScript
 
@@ -218,6 +220,87 @@ Python 2 syntax (`print "x"`); Python 2 `exec "..."` counts as dynamic code.
   they test intent, not an independent ground truth.
 - Not measured: precision on a labeled real-world corpus.
 
+## Rust
+
+New in 0.5.0. Rust produces the same IR shape and the same fact categories as
+the other languages. Paths are resolved through the file's own `use`
+declarations (including `as` aliases, `{...}` lists, `self` and `*` globs) and
+`extern crate`, so `use std::process::Command as Cmd; Cmd::new("sh")` and
+`use std::fs::*; remove_dir_all(p)` are recognized. `crate::`, `self::`,
+`super::` and a local `mod fs` are not mistaken for the standard library.
+
+| fact | Rust syntax |
+|---|---|
+| `processSpawn` (critical) | `Command::new` of `std::process`, `tokio::process`, `async_std::process`, `async_process`, `smol::process`; `nix::unistd::exec*` / `fork`, `nix::spawn::posix_spawn*`; `libc::system / popen / fork / exec* / posix_spawn*`; `subprocess::Exec / Popen`; `duct::cmd`, `xshell::cmd!`, `cmd_lib` macros |
+| `childProcess` (critical) | `use` of one of those `Command` types, or a `*` glob of their module |
+| `nativeCode` (critical) | `unsafe` blocks, `unsafe fn`, `unsafe impl`, `unsafe trait`, `extern "ABI" { ... }` (also `unsafe extern`), `extern "C" fn`, `#[no_mangle]` / `#[export_name]` / `#[link_section]` (also inside `#[unsafe(...)]`), `asm!` / `global_asm!` / `naked_asm!`, `libloading` / `dlopen2` / `libc::dlopen`, `LoadLibrary*` / `GetProcAddress` from `windows`, `windows-sys`, `winapi` |
+| `dynamicEval` (critical) | embedded interpreters: `rhai::Engine`, `mlua::Lua`, `rlua::Lua`, `boa_engine::Context`, `deno_core::JsRuntime`, `v8::Isolate / Script::compile`, `pyo3::Python::run / eval` |
+| `processExit` | `std::process::exit / abort`, `libc::exit / _exit / abort` |
+| `diskDelete` (high) | `remove_file`, `remove_dir`, `remove_dir_all` of `std::fs`, `tokio::fs`, `async_std::fs`, `fs_err` |
+| `diskWrite` / `diskRead` | `write`, `create_dir(_all)`, `rename`, `copy`, `hard_link`, `set_permissions`, `File::create(_new)`, symlinks, `tempfile`; `read`, `read_to_string`, `read_dir`, `read_link`, `File::open`, `walkdir`, `include_str!` / `include_bytes!` / `include!`; `OpenOptions` by its `.write / .append / .create / .truncate / .read` chain (a builder that is not opened in place counts as both) |
+| `outboundHttp` | `reqwest`, `ureq`, `surf`, `isahc`, `attohttpc`, `hyper` / `hyper_util` clients, `curl`, `awc`, `tungstenite`, `std::net` / `tokio::net` / `async_std::net` `TcpStream::connect`, `UdpSocket::bind` |
+| `inboundHttp` and `routes` | `TcpListener::bind`, `UnixListener::bind`, `axum::serve`, `actix_web::HttpServer::new`, `hyper::Server`, `warp::serve`, `tiny_http`, `rocket::build`, `tide`, `poem`, `salvo`; routes from axum `.route("/p", get(h).post(h))`, actix `.route("/p", web::get())` and actix / rocket / ntex attributes `#[get("/p")]` |
+| `env` | `std::env::var / var_os / set_var / remove_var` with a literal name, `env!`, `option_env!`; secret-like names are a `secret_access` signal |
+| `cryptoUse` / `secretComparison` | calls into `sha1`, `sha2`, `sha3`, `md5`, `hmac`, `ring`, `openssl`, `aes(-gcm)`, `chacha20poly1305`, `rsa`, `ed25519-dalek`, `argon2`, `bcrypt`, `jsonwebtoken`, `blake2/3` and others; `==` / `!=` on a secret-like name; `subtle::ConstantTimeEq::ct_eq`, `constant_time_eq`, `ring::constant_time`, `openssl::memcmp::eq` |
+
+Rust also has code that runs while it is being compiled, which is a common way
+to attack through a dependency: a `target` named `build.rs` adds a
+`build_script` signal (not `src/build.rs`, `tests/build.rs`, `examples/build.rs`
+or `benches/build.rs`, which are a module and test targets), and `#[proc_macro]`, `#[proc_macro_derive]` and
+`#[proc_macro_attribute]` add a `compile_time_code` signal. Neither changes
+the risk on its own; what the code does (for example `Command::new` in
+`build.rs`) does.
+
+Exports are top-level items marked plain `pub` (not `pub(crate)`), names
+re-exported with `pub use` and `#[macro_export]` macros.
+
+**Macros.** A macro call's arguments, a `macro_rules!` body and a `macro`
+2.0 body are token trees, not syntax. Paths called inside them
+(`println!("{:?}", Command::new("id"))`), `env::var("NAME")` names and
+`unsafe { }` inside them are still found, but what a macro expands to is
+not: a call that only exists after expansion, or a procedural macro's output,
+is not reported. Seeing that needs the Rust compiler (`cargo expand`), which a
+source-only analyzer does not run.
+
+**Grammar.** The bundled grammar is tree-sitter-rust v0.24.2 with a patch
+(`scripts/rust-grammar/patch-grammar.py`; `scripts/rust-grammar/build.sh`
+rebuilds the same file byte for byte) for syntax the release rejects:
+wasm-bindgen `pub type X;` in `extern` blocks (all of `web-sys` and `js-sys`),
+`safe fn` / `safe static`, `safe` and `auto` as names and type names, `const impl`,
+`const trait`, `[const]` / `~const` bounds, trait aliases, `macro` 2.0,
+negative const generic arguments, `f16` / `f128`, `super let`, `const`
+closures, attributes on expressions, `Type::<T>` in types, `fn(&_)` and
+edition-2015 `try!`.
+
+Not covered: method calls on values whose type is not visible (`cmd.spawn()`
+on a `Command` from another function is covered only by its `Command::new`),
+`std::mem::transmute` and raw pointer use outside an `unsafe` block (they
+cannot exist there), trait objects, and anything `cfg`-gated is reported
+regardless of the target platform.
+
+### Measured (0.5.0)
+
+- **Parsing:** all 15,238 `.rs` files of 424 crate versions from crates.io (the
+  `tokio`, `reqwest`, `axum`, `actix-web`, `nix`, `libc`, `libloading`, `ring`,
+  `web-sys`, `js-sys`, ... dependency tree) and all 2,874 files of the Rust
+  standard library's own sources parse completely. With the unpatched v0.24.2
+  grammar it was 13,693 (1,476 of the missing ones were generated `web-sys` /
+  `js-sys` bindings) and 2,724 (the rest used unstable syntax). On the files
+  both grammars parse, the facts are identical.
+- **`unsafe` against syn:** on the 15,237 files that
+  [syn](https://crates.io/crates/syn), the parser behind `cargo-geiger`,
+  parses, every `unsafe impl` (2,839), `unsafe trait` (160) and `extern` block
+  (6,266) it counts is reported, with no extra ones, and every `unsafe fn`
+  (10,137); the 12 extra `unsafe fn` are declared inside wasm-bindgen
+  `extern` blocks, which the syn counter does not visit. `unsafe` blocks:
+  37,167 against syn's 35,428; the extra ones are inside macro bodies and
+  macro arguments, where syn does not look. All 4,857 files syn finds `unsafe`
+  in are flagged.
+- **49 labeled snippets** in `test/fixtures/rust-labeled.js`, the syntax
+  cases in `test/rust-grammar.test.js`, plus 2,950 randomly broken real files
+  that never crash and never report a dangerous operation from an incomplete
+  parse.
+
 ## Native code
 
 New in 0.4.0, hardened in 0.4.1 and 0.4.2. Native code runs outside the language runtime: it can read and
@@ -232,6 +315,7 @@ process". `nativeCode` is in `facts.operations` for every language; when it is
 |---|---|
 | Python | loading a library: `ctypes.CDLL / PyDLL / WinDLL / OleDLL / LibraryLoader`, `ctypes.cdll / windll / oledll / pydll .LoadLibrary` or attribute (`windll.kernel32`), `_ctypes.dlopen`; calling into it: `libc.system(...)`, `windll.kernel32.VirtualAlloc(...)`, `ctypes.pythonapi.*`; function pointers: `CFUNCTYPE / WINFUNCTYPE / PYFUNCTYPE`; raw memory: `memmove`, `memset`, `string_at`, `wstring_at`, `cast`, `<type>.from_address` (also on a `ctypes.Structure` subclass), indexing a `ctypes.pointer` / `POINTER(...)` result other than `p[0]` (`p[1000] = 5`, `p[:n]`); `cffi` `FFI().dlopen / verify / memmove`, compiling C with `ffi.set_source` / `ffi.compile`, `ffi.cast` to a pointer type and calls into a `dlopen` result; `mmap.mmap` with `PROT_EXEC`; `win32api.LoadLibrary(Ex)`, `numpy.ctypeslib.load_library`, `llvmlite.binding.create_mcjit_compiler` |
 | JavaScript / TypeScript | `process.dlopen`, `process.binding` / `process._linkedBinding` (Node internals; `process.binding("spawn_sync")` spawns without `child_process`), also through an alias (`const p = process`, `const { dlopen } = process`, `globalThis.process`, `require("process")`, `import ... from "node:process"`) or as a value (`process.dlopen.call(...)`, `Reflect.apply(process.dlopen, ...)`, `(0, process.dlopen)(...)`); `Deno.dlopen`; `require` / `import` / `module.require` / a `createRequire` function of a `*.node` addon, including built paths (`"./build/" + name + ".node"`, `path.join(dir, "addon.node")`); calls (and `new`) through `koffi`, `ffi-napi` (also scoped forks such as `@napi-ffi/ffi-napi`), `ffi`, `ffi-rs`, `ref-napi`, `bun:ffi`, `bindings`, `node-gyp-build` |
+| Rust | `unsafe` blocks / `fn` / `impl` / `trait`, `extern` blocks and `extern "C" fn`, `#[no_mangle]` / `#[export_name]` / `#[link_section]`, `asm!`, `libloading` / `dlopen2` / `libc::dlopen`, Windows `LoadLibrary*` / `GetProcAddress` (see [Rust](#rust)) |
 
 Not reported: `import ctypes` (or `require("koffi")`) on its own, `ctypes`
 types, `sizeof`, `create_string_buffer`, `Structure`, `ctypes.util.find_library`.
@@ -302,13 +386,13 @@ are represented by `analysisStatus: "incomplete"`.
 
 Initializes the bundled WebAssembly parsers without analyzing source
 (default: `["javascript"]`). Needed before the synchronous `analyze()` on
-TypeScript or Python; without it `analyze()` returns `analysisStatus: "incomplete"` for
+TypeScript, Python or Rust; without it `analyze()` returns `analysisStatus: "incomplete"` for
 them. Use `analyzeAsync()` for the usual one-step workflow. Rejects for
 an unsupported language.
 
 ### `LANGUAGES`
 
-`["javascript", "typescript", "tsx", "python"]`.
+`["javascript", "typescript", "tsx", "python", "rust"]`.
 
 ### `compress(ir)` → `{ analysisStatus, language, mission, world, constraints, forbidden, summary, facts }`
 
@@ -338,7 +422,7 @@ Joins an LLM decision with the IR it was made on:
 
 ## Limitations
 
-- JavaScript, TypeScript and Python only; one file at a time — capabilities split across files are not
+- JavaScript, TypeScript, Python and Rust only; one file at a time — capabilities split across files are not
   combined.
 - Facts are syntactic. Aliases the AST cannot resolve (values passed through
   other modules, computed property names) are not followed.
