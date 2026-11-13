@@ -10,7 +10,9 @@ const pkg = require("../package.json");
 const spec = process.argv[2] || pkg.version, at = spec.lastIndexOf("@");
 const name = at > 0 ? spec.slice(0, at) : pkg.name;
 const version = at > 0 ? spec.slice(at + 1) : spec;
-const want = ["https://github.com/npm/attestation/tree/main/specs/publish/v0.1", "https://slsa.dev/provenance/v0.2"];
+// Each entry lists the accepted predicate types; npm may move GitLab from SLSA v0.2 to v1.
+const want = [["https://github.com/npm/attestation/tree/main/specs/publish/v0.1"],
+    ["https://slsa.dev/provenance/v0.2", "https://slsa.dev/provenance/v1"]];
 const npms = ["10", "11"];
 const timeoutMs = Number(process.env.ATTEST_TIMEOUT_MS || 600000);
 if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
@@ -27,8 +29,8 @@ async function attestations() {
             { headers: { "cache-control": "no-cache" }, signal: AbortSignal.timeout(30000) });
         if (res.ok) have = (await res.json()).attestations.map(a => a.predicateType);
     } catch {}
-    const missing = want.filter(t => !have.includes(t));
-    return missing.length ? `missing attestation(s): ${missing.join(", ")}` : null;
+    const missing = want.filter(any => !any.some(t => have.includes(t)));
+    return missing.length ? `missing attestation(s): ${missing.map(any => any.join(" or ")).join(", ")}` : null;
 }
 
 // npx runs in its own process group so a hung npm and its children are all
@@ -49,7 +51,7 @@ function npx(args, dir) {
         const child = spawn("npx", args, { cwd: dir, detached: true, stdio: ["ignore", "pipe", "pipe"] });
         active = { pid: child.pid, dir };
         let out = "", err = "";
-        child.stdout.on("data", d => { out = (out + d).slice(-4000); });
+        child.stdout.on("data", d => { out = (out + d).slice(-4e6); });
         child.stderr.on("data", d => { err = (err + d).slice(-4000); });
         const timer = setTimeout(() => {
             try { process.kill(-child.pid, "SIGKILL"); } catch {}
@@ -63,6 +65,15 @@ function npx(args, dir) {
     });
 }
 
+function isolate(dir) {
+    const nm = path.join(dir, "node_modules"), [top, sub] = name.split("/");
+    const rm = p => fs.rmSync(p, { recursive: true, force: true });
+    for (const e of fs.readdirSync(nm)) if (e !== top) rm(path.join(nm, e));
+    if (sub) for (const e of fs.readdirSync(path.join(nm, top))) if (e !== sub) rm(path.join(nm, top, e));
+    rm(path.join(nm, name, "node_modules"));
+    rm(path.join(dir, "package-lock.json"));
+}
+
 async function audit(npm) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "verify-"));
     const run = args => npx(["-y", `npm@${npm}`, ...args, "--cache", path.join(dir, ".npm-cache"), "--prefer-online"], dir);
@@ -71,8 +82,20 @@ async function audit(npm) {
         await run(["install", "--ignore-scripts", "--no-audit", "--no-fund", `${name}@${version}`]);
         const installed = JSON.parse(fs.readFileSync(path.join(dir, "node_modules", name, "package.json"), "utf8")).version;
         if (installed !== version) throw new Error(`installed ${installed}, expected ${version}`);
-        const out = await run(["audit", "signatures"]);
-        if (!/verified attestation/.test(out)) throw new Error(`no verified attestations reported: ${out.trim() || "(no output)"}`);
+        // npm's summary also counts dependencies, so audit a tree that holds
+        // only this package; npm 11 additionally has to list it as verified.
+        isolate(dir);
+        if (npm === "10") {
+            const out = await run(["audit", "signatures"]);
+            if (!/^audited 1 package\b/m.test(out) || !/^1 package has a verified attestation$/m.test(out))
+                throw new Error(`no verified attestation for ${name}@${version}: ${out.trim() || "(no output)"}`);
+        } else {
+            const out = await run(["audit", "signatures", "--json", "--include-attestations"]);
+            let verified;
+            try { verified = JSON.parse(out).verified; } catch {}
+            if (!Array.isArray(verified) || !verified.some(p => p && p.name === name && p.version === version && p.attestations))
+                throw new Error(`${name}@${version} not among verified attestations: ${out.trim().slice(0, 300) || "(no output)"}`);
+        }
         return null;
     } catch (e) {
         const lines = e.message.split("\n").filter(l => l.trim() && !l.includes("complete log"));
