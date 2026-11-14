@@ -286,11 +286,7 @@ const TreeParser = {
                 language,
                 tree,
                 root,
-                nodes: this.extractNodes(root),
-                metrics: {
-                    ...this.getMetrics(root),
-                    hasError
-                },
+                metrics: { hasError },
                 ...(hasError ? { parseError: this.firstError(root, language, content) } : {})
             };
         } catch (error) {
@@ -298,12 +294,7 @@ const TreeParser = {
                 ok: false,
                 language,
                 root: null,
-                nodes: [],
-                metrics: {
-                    nodeCount: 0,
-                    depth: 0,
-                    hasError: true
-                },
+                metrics: { hasError: true },
                 error: error.message
             };
         }
@@ -332,48 +323,6 @@ const TreeParser = {
             current = next;
         }
         return null;
-    },
-
-    extractNodes(node, result = []) {
-        if (!node) return result;
-
-        result.push({
-            type: node.type,
-            text: node.text ? node.text.slice(0, 100) : null,
-            named: Boolean(node.isNamed ?? node.named),
-            childCount: node.namedChildCount || 0
-        });
-
-        for (const child of node.children || []) {
-            this.extractNodes(child, result);
-        }
-
-        return result;
-    },
-
-    getMetrics(node) {
-        const walk = (current, depth = 0) => {
-            if (!current) return { count: 0, maxDepth: depth };
-
-            let count = 1;
-            let maxDepth = depth;
-
-            for (const child of current.children || []) {
-                const result = walk(child, depth + 1);
-                count += result.count;
-                maxDepth = Math.max(maxDepth, result.maxDepth);
-            }
-
-            return { count, maxDepth };
-        };
-
-        const result = walk(node);
-
-        return {
-            nodeCount: result.count,
-            depth: result.maxDepth,
-            hasError: false
-        };
     }
 };
 
