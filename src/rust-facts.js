@@ -197,11 +197,25 @@ function segmentsOf(node) {
     }
 }
 
+// The module a node belongs to: the file root or a `mod x { … }` body.
+function moduleScope(node) {
+    for (let current = node.parent; current; current = current.parent) {
+        if (current.type === "source_file" || (current.type === "declaration_list" && current.parent?.type === "mod_item")) {
+            return current;
+        }
+    }
+    return null;
+}
+const scopeKey = node => (node ? `${node.startIndex}:${node.endIndex}` : "");
+
 function createResolver() {
     const aliases = new Map();
     const globs = [];
     const imports = new Set();
+    // `extern crate std as s`: alias -> [{ scope, root, name }]; module names per scope shadow it.
     const crateAliases = new Map();
+    const modules = new Map();
+    let scope = "";
     // Each import's first `use`/`extern crate` declaration, for signal lines.
     const declarations = new Map();
     let declaration = null;
@@ -212,7 +226,11 @@ function createResolver() {
 
     const canonical = segments => {
         const parts = segments[0] === "" ? segments.slice(1) : [...segments];
-        if (parts.length && crateAliases.has(parts[0])) parts[0] = crateAliases.get(parts[0]);
+        if (parts.length && crateAliases.has(parts[0]) && !modules.get(scope)?.has(parts[0])) {
+            const entries = crateAliases.get(parts[0]);
+            const entry = entries.find(e => e.scope === scope) || entries.find(e => e.root);
+            if (entry) parts[0] = entry.name;
+        }
         if (parts.length && ROOT_ALIASES[parts[0]]) parts[0] = ROOT_ALIASES[parts[0]];
         return parts;
     };
@@ -276,7 +294,14 @@ function createResolver() {
 
     const visitUse = (node, prefix, decl = null) => {
         declaration = decl;
-        try { visit(node, prefix); } finally { declaration = null; }
+        scope = decl ? scopeKey(moduleScope(decl)) : "";
+        try { visit(node, prefix); } finally { declaration = null; scope = ""; }
+    };
+
+    const addModule = (node, name) => {
+        const key = scopeKey(moduleScope(node));
+        if (!modules.has(key)) modules.set(key, new Set());
+        modules.get(key).add(name);
     };
 
     const addExternCrate = node => {
@@ -288,9 +313,13 @@ function createResolver() {
         const alias = field(node, "alias");
         if (alias) {
             bind(alias.text, [name]);
-            // Only std crates (a renamed Cargo dependency's real name is not in the source),
-            // and only at the crate root, where the alias reaches every module.
-            if (name in STD_CRATES && node.parent?.type === "source_file") crateAliases.set(alias.text, name);
+            // Only std crates: a renamed Cargo dependency's real name is not in the source.
+            // At the crate root the alias reaches every module, elsewhere only its own.
+            if (name in STD_CRATES) {
+                const home = moduleScope(node);
+                if (!crateAliases.has(alias.text)) crateAliases.set(alias.text, []);
+                crateAliases.get(alias.text).push({ scope: scopeKey(home), root: home?.type === "source_file", name });
+            }
         }
     };
 
@@ -308,7 +337,7 @@ function createResolver() {
         return canonical(segments).join("::");
     };
 
-    return { visitUse, addExternCrate, resolve, imports, declarations, crateAliases, globs, aliases };
+    return { visitUse, addExternCrate, addModule, resolve, imports, declarations, globs, aliases };
 }
 
 function extract(content, options = {}) {
@@ -353,10 +382,11 @@ function extractFrom(ast, options) {
         } else if (node.type === "extern_crate_declaration") {
             resolver.addExternCrate(node);
         } else if (node.type === "mod_item") {
-            localModules.add(text(field(node, "name")));
+            const name = text(field(node, "name"));
+            localModules.add(name);
+            resolver.addModule(node, name);
         }
     });
-    for (const name of localModules) resolver.crateAliases.delete(name);
     for (const node of uses) {
         const argument = field(node, "argument");
         if (argument) resolver.visitUse(argument, [], node);
