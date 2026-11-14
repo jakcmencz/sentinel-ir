@@ -212,3 +212,44 @@ test("the default parse budget stops hostile input", async () => {
     assert.ok(Date.now() - started < 15000);
     assert.equal(ir.analysisStatus, "incomplete");
 });
+
+test("the native parser used by analyze() keeps the same budget", { skip: !hasNative() }, () => {
+    const { execFileSync } = require("node:child_process");
+    const script = `
+        const TreeParser = require(${JSON.stringify(require.resolve("../src/tree-parser"))});
+        const SentinelIR = require(${JSON.stringify(require.resolve(".."))});
+        TreeParser.parseTimeoutMs = 300;
+        const slow = SentinelIR.analyze("require('child_process').exec(c);" + "->".repeat(8192), { target: "a.js" });
+        const next = SentinelIR.analyze("const fs = require('fs'); fs.rmSync(p);", { target: "a.js" });
+        console.log(JSON.stringify([TreeParser.backend, slow.analysisStatus, slow.risk, slow.facts.error, next.analysisStatus, next.risk]));
+    `;
+    const started = Date.now();
+    const out = JSON.parse(execFileSync(process.execPath, ["-e", script], { encoding: "utf8", timeout: 20000 }));
+    assert.ok(Date.now() - started < 10000);
+    assert.deepEqual(out, ["native", "incomplete", "critical", "source took longer than 300 ms to parse", "complete", "high"]);
+});
+
+test("crypto-only broken source is not reported as network", async () => {
+    for (const [code, target] of [["import hashlib\nhashlib.sha256(b)\ndef f(:", "a.py"], ["use sha2::Sha256;\nfn f( {", "a.rs"]]) {
+        const ir = await analyze(code, target);
+        assert.equal(ir.analysisStatus, "incomplete", target);
+        assert.equal(ir.risk, "medium", target);
+        assert.equal(ir.summary.hasNetwork, false, target);
+        assert.equal(ir.summary.hasCrypto, true, target);
+    }
+    for (const [code, target] of [["import requests\nrequests.get(u)\ndef f(:", "a.py"], ["use reqwest::get;\nfn f( {", "a.rs"]]) {
+        const ir = await analyze(code, target);
+        assert.equal(ir.summary.hasNetwork, true, target);
+        assert.equal(ir.risk, "medium", target);
+    }
+});
+
+function hasNative() {
+    try {
+        require("tree-sitter");
+        require("tree-sitter-javascript");
+        return true;
+    } catch {
+        return false;
+    }
+}

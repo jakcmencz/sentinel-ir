@@ -240,7 +240,10 @@ const TreeParser = {
             if (last >= 0xD800 && last <= 0xDBFF && end < content.length) end--;
             return content.slice(index, end);
         };
-        const tree = parser.parse(input, null, options);
+        // The native binding has no progressCallback; it times out by itself.
+        const native = parser === this.parser && this.backend === "native";
+        if (native) parser.setTimeoutMicros(this.parseTimeoutMs * 1000);
+        const tree = native ? parser.parse(input) : parser.parse(input, null, options);
         if (tree) return tree;
         // A cancelled parse is resumed by the next call unless reset.
         parser.reset();
