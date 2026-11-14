@@ -288,8 +288,9 @@ function createResolver() {
         const alias = field(node, "alias");
         if (alias) {
             bind(alias.text, [name]);
-            // Only std crates: a renamed Cargo dependency's real name is not in the source.
-            if (name in STD_CRATES) crateAliases.set(alias.text, name);
+            // Only std crates (a renamed Cargo dependency's real name is not in the source),
+            // and only at the crate root, where the alias reaches every module.
+            if (name in STD_CRATES && node.parent?.type === "source_file") crateAliases.set(alias.text, name);
         }
     };
 
@@ -307,7 +308,7 @@ function createResolver() {
         return canonical(segments).join("::");
     };
 
-    return { visitUse, addExternCrate, resolve, imports, declarations, globs, aliases };
+    return { visitUse, addExternCrate, resolve, imports, declarations, crateAliases, globs, aliases };
 }
 
 function extract(content, options = {}) {
@@ -355,6 +356,7 @@ function extractFrom(ast, options) {
             localModules.add(text(field(node, "name")));
         }
     });
+    for (const name of localModules) resolver.crateAliases.delete(name);
     for (const node of uses) {
         const argument = field(node, "argument");
         if (argument) resolver.visitUse(argument, [], node);

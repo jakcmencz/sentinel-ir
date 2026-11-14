@@ -256,3 +256,14 @@ test('extern crate aliases resolve in use paths, in either order', async () => {
     assert.deepEqual(signals(ir), ['child_process_import:use std::process::Command', 'process_spawn:std::process::Command::new']);
     assert.equal(ir.facts.riskSignals[0].line, 1);
 });
+
+test('an extern crate std alias inside a module, or shadowed by a local mod, is not std', async () => {
+    for (const source of [
+        'mod a {\n    extern crate std as s;\n}\nmod s {\n    pub mod process { pub struct Command; }\n}\nuse s::process::Command;\n',
+        'extern crate std as s;\nmod s {\n    pub mod process { pub struct Command; }\n}\nuse s::process::Command;\n'
+    ]) {
+        const ir = await rs(source);
+        assert.deepEqual(signals(ir).filter(s => s.startsWith('child_process_import')), [], source);
+        assert.equal(ir.risk, 'low', source);
+    }
+});
