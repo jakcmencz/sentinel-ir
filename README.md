@@ -51,8 +51,11 @@ text heuristics and the IR says so (`facts.ast: false`).
   the model through it. The IR does still contain identifiers and some
   literals taken from the code (route paths, module specifiers, export names,
   environment variable names, callee names), so it *reduces* the
-  prompt-injection surface; it does not remove it. Treat model output as
-  untrusted either way.
+  prompt-injection surface; it does not remove it. Each such string is
+  collapsed to one line and cut to 128 characters (ending in `…`), string
+  literals in risk evidence are shown as `"…"` (`token == "…"`), and a comment
+  between two tokens neither reaches the IR nor hides a call from the
+  analysis. Treat model output as untrusted either way.
 
 - **Facts, not guesses.** Every structural claim comes from AST nodes: a route
   is a call on `app`/`router`/`server`/`api` with a string path, `exec` is only

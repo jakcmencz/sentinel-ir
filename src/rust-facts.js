@@ -12,6 +12,7 @@
  */
 
 const TreeParser = require("./tree-parser");
+const { named, codeText, isComment, withoutComments } = require("./ir-text");
 const { emptyFacts, dangerousOf } = require("./ast-facts");
 
 const SECRETISH = /(token|secret|signature|api[_-]?key|apikey|password|passwd|credential|auth|hmac|digest)/i;
@@ -135,6 +136,13 @@ function text(node) {
     return node ? node.text : "";
 }
 
+// The ABI string of `extern "C"`; anything that is not an ABI name is not copied.
+function abiText(abi) {
+    const literal = named(abi).find(child => child.type === "string_literal");
+    if (!literal) return '"C"';
+    return /^"[\w-]{1,32}"$/.test(literal.text) ? literal.text : '"…"';
+}
+
 function line(node) {
     return node.startPosition.row + 1;
 }
@@ -145,14 +153,14 @@ function field(node, name) {
 
 function walk(node, visit) {
     visit(node);
-    for (const child of node.namedChildren) walk(child, visit);
+    for (const child of named(node)) walk(child, visit);
 }
 
 function stringLiteral(node) {
     if (!node) return null;
     if (node.type === "raw_string_literal" || node.type === "string_literal") {
-        if (node.namedChildren.some(child => child.type === "escape_sequence")) return null;
-        return node.namedChildren.filter(child => child.type === "string_content").map(child => child.text).join("");
+        if (named(node).some(child => child.type === "escape_sequence")) return null;
+        return named(node).filter(child => child.type === "string_content").map(child => child.text).join("");
     }
     return null;
 }
@@ -240,10 +248,10 @@ function createResolver() {
                 return;
             }
             case "use_list":
-                for (const child of node.namedChildren) visitUse(child, prefix);
+                for (const child of named(node)) visitUse(child, prefix);
                 return;
             case "use_wildcard": {
-                const inner = node.namedChildren[0];
+                const inner = named(node)[0];
                 const segments = inner ? segmentsOf(inner) : [];
                 if (!segments) return;
                 const full = canonical([...prefix, ...segments]);
@@ -357,7 +365,7 @@ function extractFrom(ast, options) {
             const parent = current.parent;
             const grand = parent?.parent;
             if (!parent || parent.type !== "field_expression" || !grand || grand.type !== "call_expression") break;
-            const arg = field(grand, "arguments")?.namedChildren[0];
+            const arg = named(field(grand, "arguments"))[0];
             methods.push({ name: text(field(parent, "field")), on: !arg || text(arg) !== "false" });
             current = grand;
         }
@@ -455,7 +463,7 @@ function extractFrom(ast, options) {
         if (!segments) return;
         const name = segments[segments.length - 1];
         const q = resolver.resolve(segments);
-        const firstString = tokens ? tokens.namedChildren.find(child => child.type === "string_literal" || child.type === "raw_string_literal") : null;
+        const firstString = tokens ? named(tokens).find(child => child.type === "string_literal" || child.type === "raw_string_literal") : null;
         if (ENV_MACROS.has(name) && segments.length === 1) {
             const value = stringLiteral(firstString);
             if (value) addEnv(value, `${name}!("${value}")`, node);
@@ -479,7 +487,7 @@ function extractFrom(ast, options) {
     // Token trees (macro arguments and macro_rules! bodies) are flat tokens:
     // find `a::b(`, `a::b!(` and `unsafe {` in them.
     const scanTokens = tree => {
-        const children = tree.children;
+        const children = tree.children.filter(child => !isComment(child));
         for (let i = 0; i < children.length; i++) {
             const child = children[i];
             if (child.type === "token_tree") {
@@ -501,7 +509,7 @@ function extractFrom(ast, options) {
             }
             const next = children[j + 1];
             if (next?.type === "token_tree" && next.child(0)?.type === "(") {
-                visitCall(resolver.resolve(segments), child, next.namedChildren[0] || null);
+                visitCall(resolver.resolve(segments), child, named(next).find(arg => !isComment(arg)) || null);
             } else if (next?.type === "!" && children[j + 2]?.type === "token_tree") {
                 visitMacro(segments, children[j + 2], child);
             }
@@ -510,12 +518,12 @@ function extractFrom(ast, options) {
     };
 
     const visitAttribute = (attribute, node) => {
-        const segments = segmentsOf(attribute.namedChildren[0]);
+        const segments = segmentsOf(named(attribute).find(child => !isComment(child)));
         if (!segments) return;
         const name = segments[segments.length - 1];
         if (segments.length === 1 && name === "unsafe") {
-            const inner = attribute.namedChildren.find(child => child.type === "token_tree");
-            const first = inner?.namedChildren[0];
+            const inner = named(attribute).find(child => child.type === "token_tree");
+            const first = named(inner).find(child => !isComment(child));
             if (first && NATIVE_ATTRIBUTES.has(first.text)) native(`#[unsafe(${first.text})]`, node);
             return;
         }
@@ -523,7 +531,7 @@ function extractFrom(ast, options) {
             native(`#[${name}]`, node);
             return;
         }
-        if (segments.length === 1 && name === "path" && attribute.namedChildren.some(child => child.type === "string_literal")) {
+        if (segments.length === 1 && name === "path" && named(attribute).some(child => child.type === "string_literal")) {
             ops.diskRead = true;
             calls.filesystem.add("#[path]");
             return;
@@ -538,8 +546,8 @@ function extractFrom(ast, options) {
         const fromCrate = ROUTE_ATTRIBUTE_CRATES.includes(crate)
             || (segments.length === 1 && q === name && ROUTE_ATTRIBUTE_CRATES.some(c => [...resolver.imports].some(i => i.split("::")[0] === c)));
         if (!fromCrate) return;
-        const args = attribute.namedChildren.find(child => child.type === "token_tree");
-        const path = args ? stringLiteral(args.namedChildren.find(child => child.type === "string_literal")) : null;
+        const args = named(attribute).find(child => child.type === "token_tree");
+        const path = args ? stringLiteral(named(args).find(child => child.type === "string_literal")) : null;
         if (path === null) return;
         addRoute(name === "route" ? path : `${name.toUpperCase()} ${path}`, node);
         ops.inboundHttp = true;
@@ -554,7 +562,7 @@ function extractFrom(ast, options) {
                 if (fn?.type === "field_expression") {
                     const method = text(field(fn, "field"));
                     if (method === "route" && args) {
-                        const [pathArg, handler] = args.namedChildren;
+                        const [pathArg, handler] = named(args);
                         const path = stringLiteral(pathArg);
                         if (path !== null && handler) {
                             const verbs = [];
@@ -587,17 +595,17 @@ function extractFrom(ast, options) {
                     }
                     break;
                 }
-                visitCall(resolver.resolve(segmentsOf(fn)), node, args?.namedChildren[0] || null);
+                visitCall(resolver.resolve(segmentsOf(fn)), node, named(args)[0] || null);
                 break;
             }
             case "macro_invocation": {
-                const tokens = node.namedChildren.find(child => child.type === "token_tree");
+                const tokens = named(node).find(child => child.type === "token_tree");
                 visitMacro(segmentsOf(field(node, "macro")), tokens, node);
                 if (tokens) scanTokens(tokens);
                 break;
             }
             case "macro_definition":
-                for (const rule of node.namedChildren) {
+                for (const rule of named(node)) {
                     const right = field(rule, "right");
                     if (right) scanTokens(right);
                 }
@@ -610,27 +618,27 @@ function extractFrom(ast, options) {
                 break;
             case "function_item":
             case "function_signature_item": {
-                const modifiers = node.namedChildren.find(child => child.type === "function_modifiers");
+                const modifiers = named(node).find(child => child.type === "function_modifiers");
                 if (!modifiers) break;
                 const name = text(field(node, "name"));
                 if (modifiers.children.some(child => child.type === "unsafe")) native(`unsafe fn ${name}`, node);
-                const abi = modifiers.namedChildren.find(child => child.type === "extern_modifier");
-                if (abi && node.type === "function_item") native(`extern ${text(abi.namedChildren[0]) || '"C"'} fn ${name}`, node);
+                const abi = named(modifiers).find(child => child.type === "extern_modifier");
+                if (abi && node.type === "function_item") native(`extern ${abiText(abi)} fn ${name}`, node);
                 break;
             }
             case "impl_item":
-                if (node.children.some(child => child.type === "unsafe")) native(`unsafe impl ${text(field(node, "trait"))}`.trim(), node);
+                if (node.children.some(child => child.type === "unsafe")) native(`unsafe impl ${codeText(field(node, "trait"))}`.trim(), node);
                 break;
             case "trait_item":
                 if (node.children.some(child => child.type === "unsafe")) native(`unsafe trait ${text(field(node, "name"))}`, node);
                 break;
             case "foreign_mod_item": {
-                const abi = node.namedChildren.find(child => child.type === "extern_modifier");
-                native(`extern ${text(abi?.namedChildren[0]) || '"C"'} {}`, node);
+                const abi = named(node).find(child => child.type === "extern_modifier");
+                native(`extern ${abiText(abi)} {}`, node);
                 break;
             }
             case "attribute_item": {
-                const attribute = node.namedChildren.find(child => child.type === "attribute");
+                const attribute = named(node).find(child => child.type === "attribute");
                 if (attribute) visitAttribute(attribute, node);
                 break;
             }
@@ -640,7 +648,7 @@ function extractFrom(ast, options) {
                 const sides = [field(node, "left"), field(node, "right")].map(text);
                 if (sides.some(side => SECRETISH.test(side))) {
                     ops.secretComparison = true;
-                    signal("secret_comparison", text(node).replace(/\s+/g, " ").slice(0, 80), node);
+                    signal("secret_comparison", codeText(node).slice(0, 80), node);
                 }
                 break;
             }
@@ -674,18 +682,18 @@ const EXPORTED_ITEMS = new Set([
 // #[macro_export] macros.
 function exportsOf(root) {
     const names = new Set();
-    const children = root.namedChildren;
+    const children = named(root);
     for (let i = 0; i < children.length; i++) {
         const node = children[i];
         if (node.type === "macro_definition") {
             let k = i - 1;
             while (k >= 0 && children[k].type === "attribute_item") {
-                if (/^#\s*\[\s*macro_export\b/.test(children[k].text)) names.add(text(field(node, "name")));
+                if (/^#\s*\[\s*macro_export\b/.test(withoutComments(children[k]))) names.add(text(field(node, "name")));
                 k--;
             }
             continue;
         }
-        const visibility = node.namedChildren.find(child => child.type === "visibility_modifier");
+        const visibility = named(node).find(child => child.type === "visibility_modifier");
         if (!visibility || visibility.text !== "pub") continue;
         if (EXPORTED_ITEMS.has(node.type)) {
             const name = text(field(node, "name"));
