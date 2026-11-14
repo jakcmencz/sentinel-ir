@@ -1,0 +1,97 @@
+{
+  "$schema": "https://fundingjson.org/schema/v1.1.0.json",
+  "version": "v1.1.0",
+  "entity": {
+    "type": "individual",
+    "role": "owner",
+    "name": "Jakub (jakcmencz)",
+    "email": "jakubrojicek11@gmail.com",
+    "description": "Independent maintainer from the Czech Republic. I design and test Sentinel-IR and sentinel-ir-mcp and approve every release; most of the code is written by an AI coding agent working from my specs, with every change going through tests and CI.",
+    "webpageUrl": {
+      "url": "https://gitlab.com/jakubrojicek11"
+    }
+  },
+  "projects": [
+    {
+      "guid": "sentinel-ir",
+      "name": "Sentinel-IR",
+      "description": "Static analyzer that turns JavaScript, TypeScript, Python and Rust files into a small structural IR for AI agents and reviewers: risk level, network, filesystem, process, env and crypto calls, routes, native code and Rust build-time risk, with line numbers. It never runs the analyzed code.",
+      "webpageUrl": {
+        "url": "https://gitlab.com/jakubrojicek11/sentinel-ir"
+      },
+      "repositoryUrl": {
+        "url": "https://gitlab.com/jakubrojicek11/sentinel-ir"
+      },
+      "licenses": [
+        "spdx:Apache-2.0"
+      ],
+      "tags": [
+        "security",
+        "static-analysis",
+        "supply-chain",
+        "developer-tools",
+        "ai",
+        "rust",
+        "javascript",
+        "python"
+      ]
+    },
+    {
+      "guid": "sentinel-ir-mcp",
+      "name": "sentinel-ir-mcp",
+      "description": "Read-only MCP server that gives AI coding agents Sentinel-IR facts about a project instead of raw source. It cannot write files, run code or leave the allowed folders, and it can keep an opt-in audit log of what the agent read without storing source.",
+      "webpageUrl": {
+        "url": "https://gitlab.com/jakubrojicek11/sentinel-ir-mcp"
+      },
+      "repositoryUrl": {
+        "url": "https://gitlab.com/jakubrojicek11/sentinel-ir-mcp"
+      },
+      "licenses": [
+        "spdx:Apache-2.0"
+      ],
+      "tags": [
+        "mcp",
+        "security",
+        "developer-tools",
+        "ai",
+        "static-analysis"
+      ]
+    }
+  ],
+  "funding": {
+    "channels": [
+      {
+        "guid": "github-sponsors",
+        "type": "payment-provider",
+        "address": "https://github.com/sponsors/jakcmencz",
+        "description": "One-time or monthly sponsorship through GitHub Sponsors."
+      }
+    ],
+    "plans": [
+      {
+        "guid": "supporter",
+        "status": "active",
+        "name": "Supporter",
+        "description": "Helps cover CI and test machines.",
+        "amount": 5,
+        "currency": "USD",
+        "frequency": "monthly",
+        "channels": [
+          "github-sponsors"
+        ]
+      },
+      {
+        "guid": "development",
+        "status": "active",
+        "name": "Development",
+        "description": "A year of AI agent time, CI and Linux, macOS and Windows test machines: Go support, security hardening and releases of both packages.",
+        "amount": 12000,
+        "currency": "USD",
+        "frequency": "yearly",
+        "channels": [
+          "github-sponsors"
+        ]
+      }
+    ]
+  }
+}
