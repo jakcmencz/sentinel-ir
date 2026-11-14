@@ -49,6 +49,10 @@
     "type": "git",
     "url": "git+https://gitlab.com/jakubrojicek11/sentinel-ir.git"
   },
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/jakcmencz"
+  },
   "homepage": "https://gitlab.com/jakubrojicek11/sentinel-ir#readme",
   "bugs": {
     "url": "https://gitlab.com/jakubrojicek11/sentinel-ir/-/issues"

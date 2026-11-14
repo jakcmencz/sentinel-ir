@@ -487,6 +487,20 @@ npm test
 3. The `publish` CI job runs the tests, checks the tag matches the version and
    runs `npm publish --provenance` with the protected `NPM_TOKEN` variable.
 
+## Sponsor
+
+Sentinel-IR has one maintainer, Jakub ([@jakcmencz](https://github.com/jakcmencz)).
+He decides what it should do, tests it on his own machines and approves every
+release. Most of the code is written by an AI coding agent working from his
+specs, and every change goes through the tests and CI described above.
+Sponsorship pays for that agent time, for CI and Linux, macOS and Windows test
+machines, and for the next language, Go.
+
+[Sponsor on GitHub](https://github.com/sponsors/jakcmencz)
+
+For company sponsorship, grants or integration, write to
+[jakubrojicek11@gmail.com](mailto:jakubrojicek11@gmail.com).
+
 ## Contributing
 
 Development, CI and npm releases run on
