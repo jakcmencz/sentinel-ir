@@ -9,6 +9,7 @@
     "src/python-facts.js",
     "src/rust-facts.js",
     "src/tree-parser.js",
+    "src/ir-text.js",
     "examples/basic.js",
     "wasm/tree-sitter-javascript.wasm",
     "wasm/tree-sitter-typescript.wasm",
