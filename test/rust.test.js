@@ -261,7 +261,10 @@ test('an extern crate std alias reaches its own module (or all, at the root) unl
     for (const source of [
         'mod a {\n    extern crate std as s;\n    use s::process::Command;\n    fn f() { Command::new("sh"); }\n}\n',
         'extern crate std as s;\nmod a {\n    use s::process::Command;\n}\n',
-        'extern crate std as s;\nmod a {\n    mod s {}\n}\nuse s::process::Command;\nfn f() { Command::new("sh"); }\n'
+        'extern crate std as s;\nmod a {\n    mod s {}\n}\nuse s::process::Command;\nfn f() { Command::new("sh"); }\n',
+        'mod a {\n    extern crate std as s;\n    fn f() { use s::process::Command; Command::new("sh"); }\n}\n',
+        'fn f() {\n    extern crate std as s;\n    { use s::process::Command; Command::new("sh"); }\n}\n',
+        'extern crate std as s;\nmod a {\n    use ::s::process::Command;\n}\n'
     ]) {
         const ir = await rs(source);
         assert.ok(signals(ir).includes('child_process_import:use std::process::Command'), source);
@@ -272,7 +275,9 @@ test('an extern crate std alias reaches its own module (or all, at the root) unl
 test('an extern crate std alias inside a module, or shadowed by a local mod, is not std', async () => {
     for (const source of [
         'mod a {\n    extern crate std as s;\n}\nmod s {\n    pub mod process { pub struct Command; }\n}\nuse s::process::Command;\n',
-        'extern crate std as s;\nmod s {\n    pub mod process { pub struct Command; }\n}\nuse s::process::Command;\n'
+        'extern crate std as s;\nmod s {\n    pub mod process { pub struct Command; }\n}\nuse s::process::Command;\n',
+        'fn f() {\n    extern crate std as s;\n}\nmod s {\n    pub mod process { pub struct Command; }\n}\nuse s::process::Command;\n',
+        'mod a {\n    extern crate std as s;\n    use ::s::process::Command;\n}\nmod s {\n    pub mod process { pub struct Command; }\n}\n'
     ]) {
         const ir = await rs(source);
         assert.deepEqual(signals(ir).filter(s => s.startsWith('child_process_import')), [], source);

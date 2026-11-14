@@ -197,16 +197,20 @@ function segmentsOf(node) {
     }
 }
 
-// The module a node belongs to: the file root or a `mod x { … }` body.
-function moduleScope(node) {
+// Item scopes that see a node's items, innermost first: enclosing blocks, then its module
+// (the file root or a `mod x { … }` body). Items of an outer module are not visible.
+function itemScopes(node) {
+    const scopes = [];
     for (let current = node.parent; current; current = current.parent) {
+        if (current.type === "block") scopes.push(current);
         if (current.type === "source_file" || (current.type === "declaration_list" && current.parent?.type === "mod_item")) {
-            return current;
+            scopes.push(current);
+            break;
         }
     }
-    return null;
+    return scopes;
 }
-const scopeKey = node => (node ? `${node.startIndex}:${node.endIndex}` : "");
+const scopeKey = node => `${node.startIndex}:${node.endIndex}`;
 
 function createResolver() {
     const aliases = new Map();
@@ -215,7 +219,7 @@ function createResolver() {
     // `extern crate std as s`: alias -> [{ scope, root, name }]; module names per scope shadow it.
     const crateAliases = new Map();
     const modules = new Map();
-    let scope = "";
+    let scopes = [];
     // Each import's first `use`/`extern crate` declaration, for signal lines.
     const declarations = new Map();
     let declaration = null;
@@ -225,10 +229,16 @@ function createResolver() {
     };
 
     const canonical = segments => {
-        const parts = segments[0] === "" ? segments.slice(1) : [...segments];
-        if (parts.length && crateAliases.has(parts[0]) && !modules.get(scope)?.has(parts[0])) {
+        const absolute = segments[0] === "";
+        const parts = absolute ? segments.slice(1) : [...segments];
+        if (parts.length && crateAliases.has(parts[0])) {
             const entries = crateAliases.get(parts[0]);
-            const entry = entries.find(e => e.scope === scope) || entries.find(e => e.root);
+            // `::s` names the crate root (2015) or an extern crate (2018), never a local alias or mod.
+            const entry = absolute
+                ? entries.find(e => e.root)
+                : scopes.some(key => modules.get(key)?.has(parts[0]))
+                    ? null
+                    : entries.find(e => scopes.includes(e.scope)) || entries.find(e => e.root);
             if (entry) parts[0] = entry.name;
         }
         if (parts.length && ROOT_ALIASES[parts[0]]) parts[0] = ROOT_ALIASES[parts[0]];
@@ -294,12 +304,12 @@ function createResolver() {
 
     const visitUse = (node, prefix, decl = null) => {
         declaration = decl;
-        scope = decl ? scopeKey(moduleScope(decl)) : "";
-        try { visit(node, prefix); } finally { declaration = null; scope = ""; }
+        scopes = decl ? itemScopes(decl).map(scopeKey) : [];
+        try { visit(node, prefix); } finally { declaration = null; scopes = []; }
     };
 
     const addModule = (node, name) => {
-        const key = scopeKey(moduleScope(node));
+        const key = scopeKey(itemScopes(node)[0]);
         if (!modules.has(key)) modules.set(key, new Set());
         modules.get(key).add(name);
     };
@@ -316,9 +326,9 @@ function createResolver() {
             // Only std crates: a renamed Cargo dependency's real name is not in the source.
             // At the crate root the alias reaches every module, elsewhere only its own.
             if (name in STD_CRATES) {
-                const home = moduleScope(node);
+                const home = itemScopes(node)[0];
                 if (!crateAliases.has(alias.text)) crateAliases.set(alias.text, []);
-                crateAliases.get(alias.text).push({ scope: scopeKey(home), root: home?.type === "source_file", name });
+                crateAliases.get(alias.text).push({ scope: scopeKey(home), root: home.type === "source_file", name });
             }
         }
     };
