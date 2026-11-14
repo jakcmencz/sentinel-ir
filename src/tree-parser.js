@@ -6,6 +6,10 @@ const path = require("path");
 // chunks stay below that and never end between the halves of a surrogate pair.
 const DIRECT_INPUT_LIMIT = 4 * 1024;
 const CHUNK_SIZE = 4 * 1024;
+// tree-sitter error recovery is superlinear on some hostile input (16 KB of
+// "->" takes ~40 s in JavaScript); past this budget the file is left to the
+// text fallback instead of blocking the caller.
+const PARSE_TIMEOUT_MS = 5000;
 
 // Bundled WebAssembly grammars, one per supported language id.
 const WASM_GRAMMARS = Object.freeze({
@@ -224,18 +228,23 @@ const TreeParser = {
         return this.wasmInitPromise;
     },
 
-    parseInput(content, parser = this.parser) {
-        if (content.length <= DIRECT_INPUT_LIMIT) {
-            return parser.parse(content);
-        }
+    parseTimeoutMs: PARSE_TIMEOUT_MS,
 
-        return parser.parse(index => {
+    parseInput(content, parser = this.parser) {
+        const deadline = Date.now() + this.parseTimeoutMs;
+        const options = { progressCallback: () => Date.now() > deadline };
+        const input = content.length <= DIRECT_INPUT_LIMIT ? content : index => {
             if (index >= content.length) return null;
             let end = Math.min(index + CHUNK_SIZE, content.length);
             const last = content.charCodeAt(end - 1);
             if (last >= 0xD800 && last <= 0xDBFF && end < content.length) end--;
             return content.slice(index, end);
-        });
+        };
+        const tree = parser.parse(input, null, options);
+        if (tree) return tree;
+        // A cancelled parse is resumed by the next call unless reset.
+        parser.reset();
+        throw new Error(`source took longer than ${this.parseTimeoutMs} ms to parse`);
     },
 
     parserFor(language) {

@@ -150,7 +150,41 @@ function inferConstraints(filePath, consecutiveFailures) {
     return [...new Set(constraints)];
 }
 
-function inferRisk(filePath, content = "", facts = null) {
+// Text fallback for Python and Rust (lower-cased source). The generic checks
+// below are JavaScript-shaped; a syntax error must not turn os.system or
+// Command::new into a confident "low".
+const LANGUAGE_TEXT = {
+    python: {
+        critical: /\bos\s*\.\s*(system|popen\d?|exec\w*|spawn\w*|fork\w*|posix_spawn\w*|startfile)\b|\b(subprocess|popen2|ctypes|_ctypes|cffi|llvmlite|c?pickle|_pickle|dill|marshal|shelve|jsonpickle)\b|\bcommands\s*\.\s*getstatus|\bpty\s*\.\s*spawn\b|\bcreate_subprocess_(exec|shell)\b|\byaml\s*\.\s*(unsafe_)?load\b|\bjoblib\s*\.\s*load\b|\bread_pickle\b|\bloadlibrary\b|\b__import__\b|\bimportlib\b|\bcompile\s*\(|\bexec\b/,
+        high: /\bshutil\s*\.\s*(rmtree|move|copy\w*|chown)\b|\brmtree\b|\bos\s*\.\s*(remove|unlink|rmdir|removedirs|renames?|replace|makedirs|mkdir|chmod|chown|truncate|symlink|link)\b|\.\s*(write_text|write_bytes|unlink|rmdir|touch|mkdir|symlink_to|hardlink_to)\s*\(|\bopen\s*\([^)\n]{0,200}["'][rbt]*[wxa+]/,
+        medium: /\b(requests|urllib\d?|httpx|aiohttp|socket|socketserver|http\s*\.\s*(client|server)|wsgiref|ftplib|smtplib|telnetlib|paramiko|websockets?|flask|fastapi|django|quart|sanic|hashlib|hmac|secrets|crypt|cryptography|cryptodome|nacl|bcrypt|jwt|passlib)\b/
+    },
+    rust: {
+        critical: /\bunsafe\b|\bextern\s*("|\{)|\b(no_mangle|export_name|link_section)\b|\b(std|tokio|async_std|smol)\s*::\s*process\b|\bcommand\s*::\s*new\b|\b(async_process|duct|xshell|cmd_lib|libloading|dlopen2?|cc|cmake|pkg_config|vcpkg|rhai|mlua|rlua|boa_engine|deno_core|v8)\s*::|\b(global_|naked_|llvm_)?asm\s*!|\btransmute\b|\b(dlopen|dlsym|loadlibrary\w*|getprocaddress)\b|\b(libc|nix)\s*::\s*(\w+\s*::\s*)?(system|popen|v?fork|exec\w*|posix_spawnp?)\b|\bsubprocess\s*::\s*(exec|popen)\b|\bpython\s*::\s*(run|eval)\b|\bpy\s*\.\s*(run|eval)\s*\(|cargo::?rustc-link-/,
+        high: /\bfs(_err)?\s*::\s*(write|remove_\w+|rename|copy|create_dir\w*|hard_link|soft_link|set_permissions)\b|\bfile\s*::\s*(create\w*|options)\b|\bopenoptions\b|\bsymlink\w*|\btempfile\s*::/,
+        medium: /\b(tcpstream|tcplistener|udpsocket|unixlistener|reqwest|hyper|hyper_util|ureq|surf|isahc|attohttpc|curl|tungstenite|tokio_tungstenite|awc|axum|actix_web|rocket|warp|tiny_http|tide|poem|salvo|ntex|sha1|sha2|sha3|md5|md_5|hmac|ring|openssl|aes|aes_gcm|chacha20poly1305|rsa|ed25519_dalek|x25519_dalek|argon2|bcrypt|scrypt|pbkdf2|jsonwebtoken|blake2|blake3|orion|sodiumoxide|k256|p256|p384|hkdf|crypto_box|aws_lc_rs|rustls)\b|\b(tokio|async_std)\s*::\s*net\b/
+    }
+};
+
+const RISK_ORDER = ["low", "medium", "high", "critical"];
+
+function languageTextRisk(language, lower) {
+    const checks = LANGUAGE_TEXT[language];
+    if (!checks) return "low";
+    for (const level of ["critical", "high", "medium"]) {
+        if (checks[level].test(lower)) return level;
+    }
+    return "low";
+}
+
+function inferRisk(filePath, content = "", facts = null, language = "javascript") {
+    const fallback = textRisk(filePath, content, facts);
+    if (facts?.ast) return fallback;
+    const own = languageTextRisk(language, String(content || "").toLowerCase());
+    return RISK_ORDER.indexOf(own) > RISK_ORDER.indexOf(fallback) ? own : fallback;
+}
+
+function textRisk(filePath, content = "", facts = null) {
     const lower = String(content || "").toLowerCase();
     const path = String(filePath || "").toLowerCase();
 
@@ -225,7 +259,7 @@ function inferForbidden(content = "", facts = null) {
     return [...new Set(forbidden)];
 }
 
-function summarize(content = "", facts = null) {
+function summarize(content = "", facts = null, language = "javascript") {
     const text = String(content || "");
     const lines = text.split("\n").length;
     const size = text.length;
@@ -246,8 +280,10 @@ function summarize(content = "", facts = null) {
         size,
         lines,
         hasCrypto: text.toLowerCase().includes("crypto"),
-        hasFilesystem: text.toLowerCase().includes("fs."),
+        hasFilesystem: text.toLowerCase().includes("fs.")
+            || Boolean(LANGUAGE_TEXT[language]?.high.test(text.toLowerCase())),
         hasNetwork: NET_TEXT.test(text.toLowerCase())
+            || Boolean(LANGUAGE_TEXT[language]?.medium.test(text.toLowerCase()))
     };
 }
 
@@ -314,12 +350,12 @@ function analyze(content, options = {}) {
         language: opts.language,
         objective: inferObjective(content, opts.consecutiveFailures, facts),
         constraints: inferConstraints(opts.target, opts.consecutiveFailures),
-        risk: inferRisk(opts.target, content, facts),
+        risk: inferRisk(opts.target, content, facts, opts.language),
         pressure: opts.pressure,
         confidence: opts.confidence,
         budget: opts.budget,
         forbidden: inferForbidden(content, facts),
-        summary: summarize(content, facts),
+        summary: summarize(content, facts, opts.language),
         analysisStatus: facts.ast === true ? 'complete' : 'incomplete',
         facts
     };
