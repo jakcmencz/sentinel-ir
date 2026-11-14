@@ -243,3 +243,44 @@ test('a local mod named like a crate is not that crate', async () => {
     assert.ok(ops(await rs('mod util {} fn f() { reqwest::get("x"); }')).includes('outboundHttp'));
     assert.ok(ops(await rs('mod fs {} fn f() { std::fs::remove_file("x"); }')).includes('diskDelete'));
 });
+
+test('child_process_import points at the use or extern crate line, not line 1', async () => {
+    const ir = await rs('use std::fs;\n\n// x\nuse std::process::{self, Command as C};\nfn main() { C::new("sh").status().unwrap(); }\nmod m {\n    use std::process::*;\n}\nmod n {\n    use std::process::Command;\n}\n');
+    const at = ir.facts.riskSignals.filter(s => s.signal === 'child_process_import').map(s => `${s.evidence}@${s.line}`);
+    assert.deepEqual(at, ['use std::process::Command@4', 'use std::process::*@7']);
+});
+
+test('extern crate aliases resolve in use paths, in either order', async () => {
+    const ir = await rs('use s::process::Command;\nextern crate std as s;\nfn main() { Command::new("sh"); }\n');
+    assert.deepEqual(ir.facts.imports, ['std', 'std::process::Command']);
+    assert.deepEqual(signals(ir), ['child_process_import:use std::process::Command', 'process_spawn:std::process::Command::new']);
+    assert.equal(ir.facts.riskSignals[0].line, 1);
+});
+
+test('an extern crate std alias reaches its own module (or all, at the root) unless a mod there shadows it', async () => {
+    for (const source of [
+        'mod a {\n    extern crate std as s;\n    use s::process::Command;\n    fn f() { Command::new("sh"); }\n}\n',
+        'extern crate std as s;\nmod a {\n    use s::process::Command;\n}\n',
+        'extern crate std as s;\nmod a {\n    mod s {}\n}\nuse s::process::Command;\nfn f() { Command::new("sh"); }\n',
+        'mod a {\n    extern crate std as s;\n    fn f() { use s::process::Command; Command::new("sh"); }\n}\n',
+        'fn f() {\n    extern crate std as s;\n    { use s::process::Command; Command::new("sh"); }\n}\n',
+        'extern crate std as s;\nmod a {\n    use ::s::process::Command;\n}\n'
+    ]) {
+        const ir = await rs(source);
+        assert.ok(signals(ir).includes('child_process_import:use std::process::Command'), source);
+        assert.equal(ir.risk, 'critical', source);
+    }
+});
+
+test('an extern crate std alias inside a module, or shadowed by a local mod, is not std', async () => {
+    for (const source of [
+        'mod a {\n    extern crate std as s;\n}\nmod s {\n    pub mod process { pub struct Command; }\n}\nuse s::process::Command;\n',
+        'extern crate std as s;\nmod s {\n    pub mod process { pub struct Command; }\n}\nuse s::process::Command;\n',
+        'fn f() {\n    extern crate std as s;\n}\nmod s {\n    pub mod process { pub struct Command; }\n}\nuse s::process::Command;\n',
+        'mod a {\n    extern crate std as s;\n    use ::s::process::Command;\n}\nmod s {\n    pub mod process { pub struct Command; }\n}\n'
+    ]) {
+        const ir = await rs(source);
+        assert.deepEqual(signals(ir).filter(s => s.startsWith('child_process_import')), [], source);
+        assert.equal(ir.risk, 'low', source);
+    }
+});
