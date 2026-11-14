@@ -125,6 +125,7 @@ const INCLUDE_MACROS = new Set(["include", "include_str", "include_bytes"]);
 // Paths that cannot be resolved from this file alone.
 const LOCAL_ROOTS = new Set(["crate", "self", "super", "Self"]);
 const ROOT_ALIASES = { core: "std", alloc: "std" };
+const STD_CRATES = { std: true, core: true, alloc: true };
 
 const KNOWN_CALLS = [
     DELETE_CALLS, WRITE_CALLS, READ_CALLS, OPEN_OPTIONS_CALLS, SPAWN_CALLS, EXIT_CALLS, NATIVE_CALLS, EVAL_CALLS,
@@ -200,9 +201,18 @@ function createResolver() {
     const aliases = new Map();
     const globs = [];
     const imports = new Set();
+    const crateAliases = new Map();
+    // Each import's first `use`/`extern crate` declaration, for signal lines.
+    const declarations = new Map();
+    let declaration = null;
+    const addImport = q => {
+        imports.add(q);
+        if (declaration && !declarations.has(q)) declarations.set(q, declaration);
+    };
 
     const canonical = segments => {
         const parts = segments[0] === "" ? segments.slice(1) : [...segments];
+        if (parts.length && crateAliases.has(parts[0])) parts[0] = crateAliases.get(parts[0]);
         if (parts.length && ROOT_ALIASES[parts[0]]) parts[0] = ROOT_ALIASES[parts[0]];
         return parts;
     };
@@ -212,7 +222,7 @@ function createResolver() {
         aliases.set(name, segments);
     };
 
-    const visitUse = (node, prefix) => {
+    const visit = (node, prefix) => {
         switch (node.type) {
             case "identifier":
             case "scoped_identifier":
@@ -221,14 +231,14 @@ function createResolver() {
                 const segments = segmentsOf(node);
                 if (!segments) return;
                 const full = canonical([...prefix, ...segments]);
-                imports.add(full.join("::"));
+                addImport(full.join("::"));
                 bind(full[full.length - 1], full);
                 return;
             }
             case "self": {
                 if (!prefix.length) return;
                 const full = canonical(prefix);
-                imports.add(full.join("::"));
+                addImport(full.join("::"));
                 bind(full[full.length - 1], full);
                 return;
             }
@@ -236,7 +246,7 @@ function createResolver() {
                 const segments = segmentsOf(field(node, "path"));
                 if (!segments) return;
                 const full = canonical([...prefix, ...segments]);
-                imports.add(full.join("::"));
+                addImport(full.join("::"));
                 bind(text(field(node, "alias")), full);
                 return;
             }
@@ -244,11 +254,11 @@ function createResolver() {
                 const path = field(node, "path");
                 const head = path ? segmentsOf(path) : [];
                 const list = field(node, "list");
-                if (head && list) visitUse(list, [...prefix, ...head]);
+                if (head && list) visit(list, [...prefix, ...head]);
                 return;
             }
             case "use_list":
-                for (const child of named(node)) visitUse(child, prefix);
+                for (const child of named(node)) visit(child, prefix);
                 return;
             case "use_wildcard": {
                 const inner = named(node)[0];
@@ -256,7 +266,7 @@ function createResolver() {
                 if (!segments) return;
                 const full = canonical([...prefix, ...segments]);
                 globs.push(full);
-                imports.add(`${full.join("::")}::*`);
+                addImport(`${full.join("::")}::*`);
                 return;
             }
             default:
@@ -264,12 +274,23 @@ function createResolver() {
         }
     };
 
+    const visitUse = (node, prefix, decl = null) => {
+        declaration = decl;
+        try { visit(node, prefix); } finally { declaration = null; }
+    };
+
     const addExternCrate = node => {
         const name = text(field(node, "name"));
         if (!name) return;
-        imports.add(name);
+        declaration = node;
+        addImport(name);
+        declaration = null;
         const alias = field(node, "alias");
-        if (alias) bind(alias.text, [name]);
+        if (alias) {
+            bind(alias.text, [name]);
+            // Only std crates: a renamed Cargo dependency's real name is not in the source.
+            if (name in STD_CRATES) crateAliases.set(alias.text, name);
+        }
     };
 
     // Full path of a referenced item, or null for local and unresolvable ones.
@@ -286,7 +307,7 @@ function createResolver() {
         return canonical(segments).join("::");
     };
 
-    return { visitUse, addExternCrate, resolve, imports, globs, aliases };
+    return { visitUse, addExternCrate, resolve, imports, declarations, globs, aliases };
 }
 
 function extract(content, options = {}) {
@@ -322,23 +343,28 @@ function extractFrom(ast, options) {
 
     // A `mod reqwest` in the file shadows the crate of that name.
     const localModules = new Set();
-    // `use` applies to its whole module wherever it is written, so collect all first.
+    // `use` applies to its whole module wherever it is written, so collect all first,
+    // after `extern crate x as y` so `use y::…` resolves to x.
+    const uses = [];
     walk(root, node => {
         if (node.type === "use_declaration") {
-            const argument = field(node, "argument");
-            if (argument) resolver.visitUse(argument, []);
+            uses.push(node);
         } else if (node.type === "extern_crate_declaration") {
             resolver.addExternCrate(node);
         } else if (node.type === "mod_item") {
             localModules.add(text(field(node, "name")));
         }
     });
+    for (const node of uses) {
+        const argument = field(node, "argument");
+        if (argument) resolver.visitUse(argument, [], node);
+    }
 
     for (const q of resolver.imports) {
         const type = q.replace(/::\*$/, "");
         if (COMMAND_TYPES.has(type) || (q.endsWith("::*") && PROCESS_MODULES.has(type))) {
             ops.childProcess = true;
-            signal("child_process_import", `use ${q}`, root);
+            signal("child_process_import", `use ${q}`, resolver.declarations.get(q) || root);
         }
         if (CRYPTO_CRATES.has(q.split("::")[0])) ops.cryptoUse = true;
     }

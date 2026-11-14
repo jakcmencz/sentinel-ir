@@ -243,3 +243,16 @@ test('a local mod named like a crate is not that crate', async () => {
     assert.ok(ops(await rs('mod util {} fn f() { reqwest::get("x"); }')).includes('outboundHttp'));
     assert.ok(ops(await rs('mod fs {} fn f() { std::fs::remove_file("x"); }')).includes('diskDelete'));
 });
+
+test('child_process_import points at the use or extern crate line, not line 1', async () => {
+    const ir = await rs('use std::fs;\n\n// x\nuse std::process::{self, Command as C};\nfn main() { C::new("sh").status().unwrap(); }\nmod m {\n    use std::process::*;\n}\nmod n {\n    use std::process::Command;\n}\n');
+    const at = ir.facts.riskSignals.filter(s => s.signal === 'child_process_import').map(s => `${s.evidence}@${s.line}`);
+    assert.deepEqual(at, ['use std::process::Command@4', 'use std::process::*@7']);
+});
+
+test('extern crate aliases resolve in use paths, in either order', async () => {
+    const ir = await rs('use s::process::Command;\nextern crate std as s;\nfn main() { Command::new("sh"); }\n');
+    assert.deepEqual(ir.facts.imports, ['std', 'std::process::Command']);
+    assert.deepEqual(signals(ir), ['child_process_import:use std::process::Command', 'process_spawn:std::process::Command::new']);
+    assert.equal(ir.facts.riskSignals[0].line, 1);
+});
