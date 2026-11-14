@@ -452,7 +452,18 @@ Joins an LLM decision with the IR it was made on:
   (`import("fs").then(m => m.writeFileSync(...))`, `.then(({ rmSync }) => ...)`);
   a module passed on to another function or stored elsewhere is not.
 - The text fallback for unparseable source is a substring heuristic and can be
-  wrong in both directions; it is marked `facts.ast: false`.
+  wrong in both directions; it is marked `facts.ast: false`. For Python and
+  Rust it also looks for the language's own process, `unsafe`/FFI, file-write,
+  network and crypto names (`os.system`, `subprocess`, `shutil.rmtree`,
+  `Command::new`, `unsafe`, `extern "C"`, `std::fs::write`, `TcpStream`, ...),
+  so one syntax error or nesting too deep to parse does not turn them into
+  `low`. Words in comments and strings count here too, so a broken file is
+  more often rated too high than too low.
+- A file whose parse runs past 5 seconds is not parsed further (some hostile
+  input, such as 16 KB of `->` in JavaScript, takes tree-sitter minutes). It
+  gets the same text fallback, `analysisStatus: "incomplete"` and
+  `facts.error: "source took longer than 5000 ms to parse"`. The slowest file in
+  a 35 000-file corpus of real code took 0.2 s.
 
 ## Origin
 
