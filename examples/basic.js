@@ -4,7 +4,14 @@ const fs = require("node:fs");
 const { analyzeAsync, compress } = require("..");
 
 const file = process.argv[2] || __filename;
-const code = fs.readFileSync(file, "utf8");
+let code;
+try {
+  code = fs.readFileSync(file, "utf8");
+} catch (error) {
+  console.error(`basic.js: cannot read ${file} (${error.code || error.message})`);
+  console.error("usage: node node_modules/sentinel-ir/examples/basic.js <file>");
+  process.exit(1);
+}
 
 async function main() {
   const ir = compress(await analyzeAsync(code, { target: file }));

@@ -68,11 +68,14 @@ const EXTENSION_LANGUAGES = Object.freeze({
 // not analyze instead of parsing it with the wrong grammar.
 // Only a plain extension is echoed into facts.error; the target is caller text.
 const SAFE_EXTENSION = /^\.[a-z0-9_+-]{1,16}$/;
+const SAFE_LANGUAGE = /^[a-z0-9_+#.-]{1,32}$/;
 
 function resolveLanguage(language, target) {
     if (typeof language === "string" && language.trim() !== "") {
         const id = language.trim().toLowerCase();
-        return { language: LANGUAGE_ALIASES[id] || id, supported: Object.hasOwn(LANGUAGE_ALIASES, id) };
+        return Object.hasOwn(LANGUAGE_ALIASES, id)
+            ? { language: LANGUAGE_ALIASES[id], supported: true }
+            : { language: "unknown", supported: false, requested: SAFE_LANGUAGE.test(id) ? id : "(unnamed)" };
     }
 
     const match = /\.[^./\\]+$/.exec(String(target || "").toLowerCase());
@@ -363,7 +366,7 @@ function extractFacts(content, opts) {
             ...AstFacts.emptyFacts(),
             error: opts.extension
                 ? `unsupported file type: ${opts.extension} (supported: ${Object.keys(EXTENSION_LANGUAGES).join(" ")})`
-                : `unsupported language: ${opts.language} (supported: ${LANGUAGES.join(", ")})`
+                : `unsupported language: ${opts.requested} (supported: ${LANGUAGES.join(", ")})`
         };
     }
     try {

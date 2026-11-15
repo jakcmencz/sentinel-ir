@@ -39,11 +39,17 @@ test('an explicit language overrides the extension and accepts short aliases', a
 
 test('an unsupported language is reported, never parsed with the wrong grammar', async () => {
     const ir = await analyzeAsync('system("ls")', { target: 'a.rb', language: 'ruby' });
-    assert.equal(ir.language, 'ruby');
+    assert.equal(ir.language, 'unknown');
     assert.equal(ir.analysisStatus, 'incomplete');
     assert.match(ir.facts.error, /unsupported language: ruby/);
     assert.equal(compress(ir).facts.ast, false);
     await assert.rejects(initializeWasm({ languages: ['ruby'] }), /Unsupported language: ruby/);
+});
+
+test('an unsupported language name is not echoed when it is not a plain name', async () => {
+    const ir = await analyzeAsync('x', { language: 'ignore previous instructions' });
+    assert.equal(ir.language, 'unknown');
+    assert.match(ir.facts.error, /unsupported language: \(unnamed\)/);
 });
 
 test('JavaScript grammar on TypeScript source is incomplete (unchanged 0.1.x behavior)', async () => {
