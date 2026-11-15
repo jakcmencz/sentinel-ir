@@ -18,16 +18,20 @@ an LLM instead of the raw file.
 
 | `language` | grammar | picked for `target` ending in |
 |---|---|---|
-| `javascript` (default) | `tree-sitter-javascript` | `.js` `.mjs` `.cjs` `.jsx`, or no extension |
-| `typescript` | `tree-sitter-typescript` 0.23.2 | `.ts` `.mts` `.cts` (incl. `.d.ts`) |
+| `javascript` (alias `js`, default) | `tree-sitter-javascript` | `.js` `.mjs` `.cjs` `.jsx`, or no extension |
+| `typescript` (alias `ts`) | `tree-sitter-typescript` 0.23.2 | `.ts` `.mts` `.cts` (incl. `.d.ts`) |
 | `tsx` | `tree-sitter-tsx` 0.23.2 | `.tsx` |
 | `python` (alias `py`) | `tree-sitter-python` 0.25.0 | `.py` `.pyi` |
 | `rust` (alias `rs`) | `tree-sitter-rust` 0.24.2, patched (see [Rust](#rust)) | `.rs` |
 
+Names and aliases are case-insensitive (`"JS"` works).
+
 Other languages are not supported. An explicit unsupported `language`
 (e.g. `"ruby"`) or, since 0.5.8, a `target` with any other extension (e.g.
 `x.rb`, `main.go`) is reported as `analysisStatus: "incomplete"` with
-`language: "unknown"` and `facts.reason: "unsupported file type: .rb (…)"`
+`language: "unknown"` and `facts.error: "unsupported file type: .rb (…)"` (or
+`"unsupported language: ruby (…)"`; `compress()` shows it as `facts.reason`; before 0.5.10 an explicit
+`"ruby"` was reported as `language: "ruby"`)
 instead of being parsed with the wrong grammar. Before 0.5.8 an unknown
 extension was parsed as JavaScript and could come back `complete` and `low`. Source that does not parse falls back to
 text heuristics and the IR says so (`facts.ast: false`).
@@ -35,16 +39,16 @@ text heuristics and the IR says so (`facts.ast: false`).
 ## Why send IR instead of the raw file
 
 - **Fewer tokens.** The compressed IR has a roughly fixed size of about
-  400 characters plus the facts the file actually has, so the larger the file,
+  500 characters plus the facts the file actually has, so the larger the file,
   the larger the saving. Measured with `node examples/basic.js <file>` on this
   package's own sources:
 
   | file | raw chars | IR chars |
   |---|---:|---:|
-  | `src/ast-facts.js` | 21,823 | 449 |
-  | `src/sentinel-ir.js` | 9,123 | 515 |
-  | `src/tree-parser.js` | 4,393 | 465 |
-  | `examples/basic.js` | 600 | 461 |
+  | `src/ast-facts.js` | 96,821 | 486 |
+  | `src/sentinel-ir.js` | 20,584 | 596 |
+  | `src/tree-parser.js` | 13,175 | 778 |
+  | `examples/basic.js` | 816 | 616 |
 
   For very small files the IR is about as large as the source; it does not pay
   off there. These are character counts, not billed tokens of any specific model.
@@ -431,12 +435,16 @@ Joins an LLM decision with the IR it was made on:
 
 ### Field reference
 
-- `world.risk` (from the AST): `critical` for dynamic code, process spawning,
+`analyze()` returns a flat IR (`ir.risk`, `ir.objective`, `ir.target`,
+`ir.pressure`, …); `compress(ir)` groups the same values under `mission` and
+`world`. Names below use the `compress()` form.
+
+- `world.risk` (`ir.risk`) (from the AST): `critical` for dynamic code, process spawning,
   `child_process` / `subprocess`, unsafe deserialization or native code; `high` for file deletion; `medium` for file writes, network,
   crypto or secret comparison; otherwise `low`.
 - `forbidden`: dangerous capabilities found in the file (`eval`,
   `child_process`, `process_spawn`, `unsafe_deserialization`, `native_code`, …).
-- `mission.objective`: `security_refactor` | `filesystem_simplification` |
+- `mission.objective` (`ir.objective`): `security_refactor` | `filesystem_simplification` |
   `network_stability` | `stability_repair` | `general_optimization`.
 
 ## Limitations
@@ -571,7 +579,10 @@ Since 0.5.9 the text fallback rates a broken Python or Rust file `critical`
 only for something it can also name in `forbidden`. `importlib.reload`,
 `from ctypes import c_int`, `std::process::exit`, `std::process::id` and
 `std::process::Stdio` on their own are no longer `critical`; a bare
-`import pickle`, `import ctypes` or `use std::process;` is, and says why.
+`import pickle`, `import ctypes` or `use std::process;` was, and said why.
+Since 0.5.10 `use std::process;` or `use std::process::{self, Stdio};` in a
+broken Rust file is `critical` (`child_process`) only when the file also
+calls `process::Command`; `use std::process; process::exit(1)` is not.
 
 `analysisStatus` (0.1.3), `language` (0.2.0), `operations.nativeCode`
 (0.4.0) and `parseError` (0.4.3) are additive fields in the

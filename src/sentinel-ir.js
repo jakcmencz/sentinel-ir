@@ -68,11 +68,14 @@ const EXTENSION_LANGUAGES = Object.freeze({
 // not analyze instead of parsing it with the wrong grammar.
 // Only a plain extension is echoed into facts.error; the target is caller text.
 const SAFE_EXTENSION = /^\.[a-z0-9_+-]{1,16}$/;
+const SAFE_LANGUAGE = /^[a-z0-9_+#.-]{1,32}$/;
 
 function resolveLanguage(language, target) {
     if (typeof language === "string" && language.trim() !== "") {
         const id = language.trim().toLowerCase();
-        return { language: LANGUAGE_ALIASES[id] || id, supported: Object.hasOwn(LANGUAGE_ALIASES, id) };
+        return Object.hasOwn(LANGUAGE_ALIASES, id)
+            ? { language: LANGUAGE_ALIASES[id], supported: true }
+            : { language: "unknown", supported: false, requested: SAFE_LANGUAGE.test(id) ? id : "(unnamed)" };
     }
 
     const match = /\.[^./\\]+$/.exec(String(target || "").toLowerCase());
@@ -168,7 +171,7 @@ const LANGUAGE_TEXT = {
         crypto: /\b(hashlib|hmac|secrets|crypt|cryptography|cryptodome|nacl|bcrypt|jwt|passlib)\b/
     },
     rust: {
-        critical: /\bunsafe\b|\bextern\s*("|\{)|\b(no_mangle|export_name|link_section)\b|\b(std|tokio|async_std|smol)\s*::\s*process\b(?!\s*::\s*(exit|abort|id|exitcode|stdio)\b)|\bcommand\s*::\s*new\b|\b(async_process|duct|xshell|cmd_lib|libloading|dlopen2?|cc|cmake|pkg_config|vcpkg|rhai|mlua|rlua|boa_engine|deno_core|v8)\s*::|\b(global_|naked_|llvm_)?asm\s*!|\btransmute\b|\b(dlopen|dlsym|loadlibrary\w*|getprocaddress)\b|\b(libc|nix)\s*::\s*(\w+\s*::\s*)?(system|popen|v?fork|exec\w*|posix_spawnp?)\b|\bsubprocess\s*::\s*(exec|popen)\b|\bpython\s*::\s*(run|eval)\b|\bpy\s*\.\s*(run|eval)\s*\(|cargo::?rustc-link-/,
+        critical: /\bunsafe\b|\bextern\s*("|\{)|\b(no_mangle|export_name|link_section)\b|\b(std|tokio|async_std|smol)\s*::\s*process\b(?!\s*::\s*(exit|abort|id|exitcode|stdio)\b|\s*;|\s*::\s*\{(?![^}]*\bcommand\b))|\bcommand\s*::\s*new\b|\b(async_process|duct|xshell|cmd_lib|libloading|dlopen2?|cc|cmake|pkg_config|vcpkg|rhai|mlua|rlua|boa_engine|deno_core|v8)\s*::|\b(global_|naked_|llvm_)?asm\s*!|\btransmute\b|\b(dlopen|dlsym|loadlibrary\w*|getprocaddress)\b|\b(libc|nix)\s*::\s*(\w+\s*::\s*)?(system|popen|v?fork|exec\w*|posix_spawnp?)\b|\bsubprocess\s*::\s*(exec|popen)\b|\bpython\s*::\s*(run|eval)\b|\bpy\s*\.\s*(run|eval)\s*\(|cargo::?rustc-link-/,
         high: /\bfs(_err)?\s*::\s*(write|remove_\w+|rename|copy|create_dir\w*|hard_link|soft_link|set_permissions)\b|\bfile\s*::\s*(create\w*|options)\b|\bopenoptions\b|\bsymlink\w*|\btempfile\s*::/,
         network: /\b(tcpstream|tcplistener|udpsocket|unixlistener|reqwest|hyper|hyper_util|ureq|surf|isahc|attohttpc|curl|tungstenite|tokio_tungstenite|awc|axum|actix_web|rocket|warp|tiny_http|tide|poem|salvo|ntex)\b|\b(tokio|async_std)\s*::\s*net\b/,
         crypto: /\b(sha1|sha2|sha3|md5|md_5|hmac|ring|openssl|aes|aes_gcm|chacha20poly1305|rsa|ed25519_dalek|x25519_dalek|argon2|bcrypt|scrypt|pbkdf2|jsonwebtoken|blake2|blake3|orion|sodiumoxide|k256|p256|p384|hkdf|crypto_box|aws_lc_rs|rustls)\b/
@@ -264,7 +267,7 @@ const LANGUAGE_FORBIDDEN_TEXT = {
     ],
     rust: [
         ["eval", /\b(rhai|mlua|rlua|boa_engine|deno_core|v8)\s*::|\bpython\s*::\s*(run|eval)\b|\bpy\s*\.\s*(run|eval)\s*\(/],
-        ["child_process", /\b(std|tokio|async_std|smol)\s*::\s*process\s*(::\s*(\{[^}]*)?\bcommand\b|;|::\s*\{[^}]*\bself\b)|\b(async_process|duct|xshell|cmd_lib)\s*::/],
+        ["child_process", /\b(std|tokio|async_std|smol)\s*::\s*process\s*::\s*(\{[^}]*)?\bcommand\b|\b(std|tokio|async_std|smol)\s*::\s*process\s*(;|::\s*\{[^}]*\bself\b)[\s\S]*\bprocess\s*::\s*command\b|\b(async_process|duct|xshell|cmd_lib)\s*::/],
         ["process_spawn", /\bcommand\s*::\s*new\b|\b(libc|nix)\s*::\s*(\w+\s*::\s*)?(system|popen|v?fork|exec\w*|posix_spawnp?)\b|\bsubprocess\s*::\s*(exec|popen)\b/],
         ["destructive_fs", /\bfs(_err)?\s*::\s*(remove_\w+|rename)\b/],
         ["native_code", /\bunsafe\b|\bextern\s*("|\{)|\b(no_mangle|export_name|link_section)\b|\b(global_|naked_|llvm_)?asm\s*!|\btransmute\b|\b(libloading|dlopen2?|cc|cmake|pkg_config|vcpkg)\s*::|\b(dlopen|dlsym|loadlibrary\w*|getprocaddress)\b|cargo::?rustc-link-/]
@@ -363,7 +366,7 @@ function extractFacts(content, opts) {
             ...AstFacts.emptyFacts(),
             error: opts.extension
                 ? `unsupported file type: ${opts.extension} (supported: ${Object.keys(EXTENSION_LANGUAGES).join(" ")})`
-                : `unsupported language: ${opts.language} (supported: ${LANGUAGES.join(", ")})`
+                : `unsupported language: ${opts.requested} (supported: ${LANGUAGES.join(", ")})`
         };
     }
     try {
