@@ -485,7 +485,8 @@ npm test
 1. Bump `version` in `package.json` (and `package-lock.json`, `npm install`).
 2. Push a tag `v<version>` (tags `v*` are protected).
 3. The `publish` CI job runs the tests, checks the tag matches the version and
-   runs `npm publish --provenance` with the protected `NPM_TOKEN` variable.
+   runs `npm publish --provenance` through npm trusted publishing (GitLab
+   OIDC, no stored npm token).
 
 ## Sponsor
 

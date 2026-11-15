@@ -54,11 +54,14 @@ verify_attestations:
       done
 
 # Release: push a protected tag vX.Y.Z matching package.json "version".
-# NPM_TOKEN is a masked, protected CI/CD variable; protected tags only.
+# npm trusted publishing: npm exchanges NPM_ID_TOKEN (GitLab OIDC) for a
+# short-lived publish token, so no npm token is stored in GitLab.
 publish:
   stage: publish
   image: node:24
   id_tokens:
+    NPM_ID_TOKEN:
+      aud: "npm:registry.npmjs.org"
     SIGSTORE_ID_TOKEN:
       aud: sigstore
   rules:
@@ -67,6 +70,5 @@ publish:
     - npm ci
     - npm test
     - test "v$(node -p 'require("./package.json").version')" = "$CI_COMMIT_TAG"
-    - echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
     - npm publish --provenance --access public
     - node scripts/verify-attestations.js
