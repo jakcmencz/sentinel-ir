@@ -499,7 +499,7 @@ machines, and for the next language, Go.
 [Sponsor on GitHub](https://github.com/sponsors/jakcmencz)
 
 For company sponsorship, grants or integration, write to
-[jakubrojicek11@gmail.com](mailto:jakubrojicek11@gmail.com).
+[sentinel.ir.contact@gmail.com](mailto:sentinel.ir.contact@gmail.com).
 
 ## Contributing
 
