@@ -567,6 +567,11 @@ Since 0.5.8, a Python or Rust file that does not parse and is rated by the text
 fallback also lists what it saw in `forbidden` (`process_spawn`,
 `child_process`, `destructive_fs`, `unsafe_deserialization`, `native_code`,
 `eval`), as JavaScript already did.
+Since 0.5.9 the text fallback rates a broken Python or Rust file `critical`
+only for something it can also name in `forbidden`. `importlib.reload`,
+`from ctypes import c_int`, `std::process::exit`, `std::process::id` and
+`std::process::Stdio` on their own are no longer `critical`; a bare
+`import pickle`, `import ctypes` or `use std::process;` is, and says why.
 
 `analysisStatus` (0.1.3), `language` (0.2.0), `operations.nativeCode`
 (0.4.0) and `parseError` (0.4.3) are additive fields in the

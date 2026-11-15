@@ -162,13 +162,13 @@ function inferConstraints(filePath, consecutiveFailures) {
 // Command::new into a confident "low".
 const LANGUAGE_TEXT = {
     python: {
-        critical: /\bos\s*\.\s*(system|popen\d?|exec\w*|spawn\w*|fork\w*|posix_spawn\w*|startfile)\b|\b(subprocess|popen2|ctypes|_ctypes|cffi|llvmlite|c?pickle|_pickle|dill|marshal|shelve|jsonpickle)\b|\bcommands\s*\.\s*getstatus|\bpty\s*\.\s*spawn\b|\bcreate_subprocess_(exec|shell)\b|\byaml\s*\.\s*(unsafe_)?load\b|\bjoblib\s*\.\s*load\b|\bread_pickle\b|\bloadlibrary\b|\b__import__\b|\bimportlib\b|\bcompile\s*\(|\bexec\b/,
+        critical: /\bos\s*\.\s*(system|popen\d?|exec\w*|spawn\w*|fork\w*|posix_spawn\w*|startfile)\b|\bimport\s+_?ctypes\b|\b(subprocess|popen2|cffi|llvmlite|c?pickle|_pickle|dill|marshal|shelve|jsonpickle)\b|\bcommands\s*\.\s*getstatus|\bpty\s*\.\s*spawn\b|\bcreate_subprocess_(exec|shell)\b|\byaml\s*\.\s*(unsafe_)?load\b|\bjoblib\s*\.\s*load\b|\bread_pickle\b|\bloadlibrary\b|\b__import__\b|\bimport_module\b|\bcompile\s*\(|\bexec\b/,
         high: /\bshutil\s*\.\s*(rmtree|move|copy\w*|chown)\b|\brmtree\b|\bos\s*\.\s*(remove|unlink|rmdir|removedirs|renames?|replace|makedirs|mkdir|chmod|chown|truncate|symlink|link)\b|\.\s*(write_text|write_bytes|unlink|rmdir|touch|mkdir|symlink_to|hardlink_to)\s*\(|\bopen\s*\([^)\n]{0,200}["'][rbt]*[wxa+]/,
         network: /\b(requests|urllib\d?|httpx|aiohttp|socket|socketserver|http\s*\.\s*(client|server)|wsgiref|ftplib|smtplib|telnetlib|paramiko|websockets?|flask|fastapi|django|quart|sanic)\b/,
         crypto: /\b(hashlib|hmac|secrets|crypt|cryptography|cryptodome|nacl|bcrypt|jwt|passlib)\b/
     },
     rust: {
-        critical: /\bunsafe\b|\bextern\s*("|\{)|\b(no_mangle|export_name|link_section)\b|\b(std|tokio|async_std|smol)\s*::\s*process\b|\bcommand\s*::\s*new\b|\b(async_process|duct|xshell|cmd_lib|libloading|dlopen2?|cc|cmake|pkg_config|vcpkg|rhai|mlua|rlua|boa_engine|deno_core|v8)\s*::|\b(global_|naked_|llvm_)?asm\s*!|\btransmute\b|\b(dlopen|dlsym|loadlibrary\w*|getprocaddress)\b|\b(libc|nix)\s*::\s*(\w+\s*::\s*)?(system|popen|v?fork|exec\w*|posix_spawnp?)\b|\bsubprocess\s*::\s*(exec|popen)\b|\bpython\s*::\s*(run|eval)\b|\bpy\s*\.\s*(run|eval)\s*\(|cargo::?rustc-link-/,
+        critical: /\bunsafe\b|\bextern\s*("|\{)|\b(no_mangle|export_name|link_section)\b|\b(std|tokio|async_std|smol)\s*::\s*process\b(?!\s*::\s*(exit|abort|id|exitcode|stdio)\b)|\bcommand\s*::\s*new\b|\b(async_process|duct|xshell|cmd_lib|libloading|dlopen2?|cc|cmake|pkg_config|vcpkg|rhai|mlua|rlua|boa_engine|deno_core|v8)\s*::|\b(global_|naked_|llvm_)?asm\s*!|\btransmute\b|\b(dlopen|dlsym|loadlibrary\w*|getprocaddress)\b|\b(libc|nix)\s*::\s*(\w+\s*::\s*)?(system|popen|v?fork|exec\w*|posix_spawnp?)\b|\bsubprocess\s*::\s*(exec|popen)\b|\bpython\s*::\s*(run|eval)\b|\bpy\s*\.\s*(run|eval)\s*\(|cargo::?rustc-link-/,
         high: /\bfs(_err)?\s*::\s*(write|remove_\w+|rename|copy|create_dir\w*|hard_link|soft_link|set_permissions)\b|\bfile\s*::\s*(create\w*|options)\b|\bopenoptions\b|\bsymlink\w*|\btempfile\s*::/,
         network: /\b(tcpstream|tcplistener|udpsocket|unixlistener|reqwest|hyper|hyper_util|ureq|surf|isahc|attohttpc|curl|tungstenite|tokio_tungstenite|awc|axum|actix_web|rocket|warp|tiny_http|tide|poem|salvo|ntex)\b|\b(tokio|async_std)\s*::\s*net\b/,
         crypto: /\b(sha1|sha2|sha3|md5|md_5|hmac|ring|openssl|aes|aes_gcm|chacha20poly1305|rsa|ed25519_dalek|x25519_dalek|argon2|bcrypt|scrypt|pbkdf2|jsonwebtoken|blake2|blake3|orion|sodiumoxide|k256|p256|p384|hkdf|crypto_box|aws_lc_rs|rustls)\b/
@@ -255,15 +255,16 @@ const NATIVE_TEXT = new RegExp([
 // file rated critical by LANGUAGE_TEXT also says which capability it saw.
 const LANGUAGE_FORBIDDEN_TEXT = {
     python: [
-        ["eval", /\b(eval|exec|compile)\s*\(|\b__import__\s*\(|\bimportlib\s*\.\s*import_module\s*\(/],
+        ["eval", /\b(eval|exec|compile)\s*\(|\bexec\b|\b__import__\b|\bimport_module\b/],
         ["child_process", /\b(subprocess|popen2)\b|\bcreate_subprocess_(exec|shell)\b|\bpty\s*\.\s*spawn\b|\bcommands\s*\.\s*getstatus/],
         ["process_spawn", /\bos\s*\.\s*(system|popen\d?|exec\w*|spawn\w*|fork\w*|posix_spawn\w*|startfile)\b|\bsubprocess\s*\.\s*\w+\s*\(|\bcreate_subprocess_(exec|shell)\b|\bpty\s*\.\s*spawn\b/],
         ["destructive_fs", /\brmtree\b|\bshutil\s*\.\s*move\b|\bos\s*\.\s*(remove|unlink|rmdir|removedirs|truncate)\b|\.\s*(unlink|rmdir)\s*\(/],
-        ["unsafe_deserialization", /\b(c?pickle|_pickle|dill|marshal|shelve|jsonpickle|joblib)\s*\.\s*(loads?|open|unpickler)\b|\byaml\s*\.\s*(unsafe_)?load\b|\bread_pickle\b/]
+        ["unsafe_deserialization", /\b(c?pickle|_pickle|dill|marshal|shelve|jsonpickle)\b|\bjoblib\s*\.\s*load\b|\byaml\s*\.\s*(unsafe_)?load\b|\bread_pickle\b/],
+        ["native_code", /\bimport\s+_?ctypes\b|\b(cffi|llvmlite)\b|\bloadlibrary\b/]
     ],
     rust: [
         ["eval", /\b(rhai|mlua|rlua|boa_engine|deno_core|v8)\s*::|\bpython\s*::\s*(run|eval)\b|\bpy\s*\.\s*(run|eval)\s*\(/],
-        ["child_process", /\b(std|tokio|async_std|smol)\s*::\s*process\s*::\s*(\{[^}]*)?\bcommand\b|\b(async_process|duct|xshell|cmd_lib)\s*::/],
+        ["child_process", /\b(std|tokio|async_std|smol)\s*::\s*process\s*(::\s*(\{[^}]*)?\bcommand\b|;|::\s*\{[^}]*\bself\b)|\b(async_process|duct|xshell|cmd_lib)\s*::/],
         ["process_spawn", /\bcommand\s*::\s*new\b|\b(libc|nix)\s*::\s*(\w+\s*::\s*)?(system|popen|v?fork|exec\w*|posix_spawnp?)\b|\bsubprocess\s*::\s*(exec|popen)\b/],
         ["destructive_fs", /\bfs(_err)?\s*::\s*(remove_\w+|rename)\b/],
         ["native_code", /\bunsafe\b|\bextern\s*("|\{)|\b(no_mangle|export_name|link_section)\b|\b(global_|naked_|llvm_)?asm\s*!|\btransmute\b|\b(libloading|dlopen2?|cc|cmake|pkg_config|vcpkg)\s*::|\b(dlopen|dlsym|loadlibrary\w*|getprocaddress)\b|cargo::?rustc-link-/]
