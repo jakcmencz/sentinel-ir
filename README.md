@@ -18,15 +18,18 @@ an LLM instead of the raw file.
 
 | `language` | grammar | picked for `target` ending in |
 |---|---|---|
-| `javascript` (default) | `tree-sitter-javascript` | `.js` `.mjs` `.cjs` `.jsx`, or no / unknown extension |
+| `javascript` (default) | `tree-sitter-javascript` | `.js` `.mjs` `.cjs` `.jsx`, or no extension |
 | `typescript` | `tree-sitter-typescript` 0.23.2 | `.ts` `.mts` `.cts` (incl. `.d.ts`) |
 | `tsx` | `tree-sitter-tsx` 0.23.2 | `.tsx` |
 | `python` (alias `py`) | `tree-sitter-python` 0.25.0 | `.py` `.pyi` |
 | `rust` (alias `rs`) | `tree-sitter-rust` 0.24.2, patched (see [Rust](#rust)) | `.rs` |
 
 Other languages are not supported. An explicit unsupported `language`
-(e.g. `"ruby"`) is reported as `analysisStatus: "incomplete"` instead of
-being parsed with the wrong grammar. Source that does not parse falls back to
+(e.g. `"ruby"`) or, since 0.5.8, a `target` with any other extension (e.g.
+`x.rb`, `main.go`) is reported as `analysisStatus: "incomplete"` with
+`language: "unknown"` and `facts.reason: "unsupported file type: .rb (…)"`
+instead of being parsed with the wrong grammar. Before 0.5.8 an unknown
+extension was parsed as JavaScript and could come back `complete` and `low`. Source that does not parse falls back to
 text heuristics and the IR says so (`facts.ast: false`).
 
 ## Why send IR instead of the raw file
@@ -74,7 +77,11 @@ to rewrite code it can no longer see.
 npm install sentinel-ir
 ```
 
-Requires Node.js 20 or newer. The native `tree-sitter` packages are optional dependencies. When no parser has been initialized, `analyze()` attempts to initialize the native parser and does not automatically fall back to WebAssembly if that fails. Use `analyzeAsync()` to initialize the bundled WebAssembly parser before analysis.
+Requires Node.js 20 or newer. The native `tree-sitter` packages are optional dependencies.
+npm 11 may print `install-scripts … not yet covered by allowScripts: tree-sitter,
+tree-sitter-javascript`; that is npm asking whether to build the optional
+native parser. Everything works without it, because `analyzeAsync()` uses the
+bundled WebAssembly parsers. When no parser has been initialized, `analyze()` attempts to initialize the native parser and does not automatically fall back to WebAssembly if that fails. Use `analyzeAsync()` to initialize the bundled WebAssembly parser before analysis.
 
 ## Usage
 
@@ -123,8 +130,13 @@ Output:
 }
 ```
 
-Run `npm run example -- path/to/file.js` to see the IR of any file and its size
-next to the raw source.
+To see the IR of any file and its size next to the raw source, run the bundled
+example: `node node_modules/sentinel-ir/examples/basic.js path/to/file.js` in
+a project that installed `sentinel-ir` (or `npm run example -- path/to/file.js`
+in a checkout of this repository).
+
+TypeScript declarations are bundled since 0.5.8 (`src/sentinel-ir.d.ts`), so
+`import { analyzeAsync } from "sentinel-ir"` type-checks under `strict`.
 
 ## WebAssembly parser
 
@@ -372,7 +384,7 @@ your own signals, passed through into `world` and used for `objective` /
 | option | type | default | effect |
 |---|---|---|---|
 | `target` | string | `null` | file path; shown in `mission.target`; its extension selects the language when `language` is not given; a path containing `crypto` raises low risk to medium and adds `preserve_security` |
-| `language` | string | from `target`, else `"javascript"` | `javascript` / `js`, `typescript` / `ts`, `tsx`; overrides the extension |
+| `language` | string | from `target`, else `"javascript"` | `javascript` / `js`, `typescript` / `ts`, `tsx`, `python` / `py`, `rust` / `rs`; overrides the extension |
 | `pressure` | number in [0, 1] | `0.5` | copied to `world.pressure` |
 | `confidence` | number in [0, 1] | `0.75` | copied to `world.confidence` |
 | `budget` | number ≥ 0 | `0.015` | copied to `world.budget` |
@@ -532,8 +544,9 @@ gives where the first error region starts, for example
 `{ "line": 42, "column": 1, "kind": "missing", "expected": "}" }`.
 `kind` is `missing` (the parser expected a token that is absent; `expected`
 names it), `unexpected` (the parser could not use the text at that
-position) or, since 0.4.5 and for Python only, `unclosed` (the bracket at that
-position is never closed; `expected` names the closing bracket). It never
+position) or, since 0.4.5 for Python and 0.5.8 for every language, `unclosed`
+(the bracket at that position is never closed; `expected` names the closing
+bracket). It never
 contains source text. It does not say whether the code
 is wrong or uses syntax the grammar does not support, for example TypeScript
 `export type *` or variance annotations such as `in T`.
@@ -545,7 +558,15 @@ region often started at the beginning of the statement or file, so the result
 was line 1, column 1. On 4 320 broken copies of standard-library files (one
 bracket, comma or colon removed or added), the reported line matches CPython
 in 81 % of cases (0.4.4: 67 %) and the column too in 67 % (0.4.4: 29 %).
-JavaScript and TypeScript positions are unchanged.
+Since 0.5.8, when another grammar wraps the statement or the whole file in one
+error region (an unclosed `{` in TSX, a missing `}` in Rust), the position is
+the first closing bracket without a match or the innermost bracket that is
+never closed, instead of line 1, column 1.
+
+Since 0.5.8, a Python or Rust file that does not parse and is rated by the text
+fallback also lists what it saw in `forbidden` (`process_spawn`,
+`child_process`, `destructive_fs`, `unsafe_deserialization`, `native_code`,
+`eval`), as JavaScript already did.
 
 `analysisStatus` (0.1.3), `language` (0.2.0), `operations.nativeCode`
 (0.4.0) and `parseError` (0.4.3) are additive fields in the
