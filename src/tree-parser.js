@@ -130,6 +130,27 @@ function pythonErrorIn(error, lines) {
     return null;
 }
 
+// Other grammars also wrap a whole statement or file in one ERROR node (an
+// unclosed `{` in TSX, a missing `}` in Rust). Inside it, the first unmatched
+// closing bracket or the innermost bracket that is never closed is a better
+// position than the region start.
+function bracketErrorIn(error) {
+    const open = [];
+    for (const token of leafTokens(error)) {
+        if (nodeFlag(token, "isMissing")) continue;
+        if (OPENING[token.type]) open.push(token);
+        else if (CLOSING.has(token.type)) {
+            if (open.length && OPENING[open[open.length - 1].type] === token.type) open.pop();
+            else return errorAt(token.startPosition, "unexpected");
+        }
+    }
+    if (open.length) {
+        const bracket = open[open.length - 1];
+        return errorAt(bracket.startPosition, "unclosed", OPENING[bracket.type]);
+    }
+    return errorAt(error.startPosition, "unexpected");
+}
+
 function isBefore(a, b) {
     return a.row < b.row || (a.row === b.row && a.column < b.column);
 }
@@ -321,7 +342,7 @@ const TreeParser = {
             if (current.type === "ERROR") {
                 return language === "python"
                     ? pythonErrorIn(current, content.split("\n"))
-                    : errorAt(current.startPosition, "unexpected");
+                    : bracketErrorIn(current);
             }
 
             let next = null;

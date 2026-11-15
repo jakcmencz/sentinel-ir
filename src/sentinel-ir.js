@@ -47,7 +47,8 @@ const LANGUAGE_ALIASES = Object.freeze({
 });
 
 // File extensions that select a grammar when no `language` option is given.
-// Anything else (including no target) is analyzed as JavaScript, as before.
+// A target without an extension is analyzed as JavaScript; any other extension
+// is reported as unsupported instead of being parsed with the wrong grammar.
 const EXTENSION_LANGUAGES = Object.freeze({
     ".js": "javascript",
     ".mjs": "javascript",
@@ -72,8 +73,11 @@ function resolveLanguage(language, target) {
     }
 
     const match = /\.[^./\\]+$/.exec(String(target || "").toLowerCase());
-    const inferred = match && EXTENSION_LANGUAGES[match[0]];
-    return { language: inferred || "javascript", supported: true };
+    if (!match) return { language: "javascript", supported: true };
+    const inferred = EXTENSION_LANGUAGES[match[0]];
+    return inferred
+        ? { language: inferred, supported: true }
+        : { language: "unknown", supported: false, extension: match[0] };
 }
 
 const DEFAULTS = Object.freeze({
@@ -244,13 +248,35 @@ const NATIVE_TEXT = new RegExp([
     /(\brequire\s*\(\s*|\bfrom\s+|\bimport\s+)["'`](@[^/"'`]+\/)?(koffi|ffi-napi|ffi|node-ffi|ffi-rs|ref-napi|bun:ffi|bindings|node-gyp-build)["'`]/
 ].map(r => r.source).join("|"));
 
-function inferForbidden(content = "", facts = null) {
+// Text-fallback counterparts of the Python and Rust `dangerous` facts, so a
+// file rated critical by LANGUAGE_TEXT also says which capability it saw.
+const LANGUAGE_FORBIDDEN_TEXT = {
+    python: [
+        ["eval", /\b(eval|exec|compile)\s*\(|\b__import__\b|\bimportlib\b/],
+        ["child_process", /\b(subprocess|popen2)\b|\bcreate_subprocess_(exec|shell)\b|\bpty\s*\.\s*spawn\b|\bcommands\s*\.\s*getstatus/],
+        ["process_spawn", /\bos\s*\.\s*(system|popen\d?|exec\w*|spawn\w*|fork\w*|posix_spawn\w*|startfile)\b|\bsubprocess\s*\.\s*\w+\s*\(|\bcreate_subprocess_(exec|shell)\b|\bpty\s*\.\s*spawn\b/],
+        ["destructive_fs", /\brmtree\b|\bshutil\s*\.\s*move\b|\bos\s*\.\s*(remove|unlink|rmdir|removedirs|truncate)\b|\.\s*(unlink|rmdir)\s*\(/],
+        ["unsafe_deserialization", /\b(c?pickle|_pickle|dill|marshal|shelve|jsonpickle|joblib)\s*\.\s*(loads?|open|unpickler)\b|\byaml\s*\.\s*(unsafe_)?load\b|\bread_pickle\b/]
+    ],
+    rust: [
+        ["eval", /\b(rhai|mlua|rlua|boa_engine|deno_core|v8)\s*::|\bpython\s*::\s*(run|eval)\b|\bpy\s*\.\s*(run|eval)\s*\(/],
+        ["child_process", /\b(std|tokio|async_std|smol)\s*::\s*process\b|\b(async_process|duct|xshell|cmd_lib)\s*::/],
+        ["process_spawn", /\bcommand\s*::\s*new\b|\b(libc|nix)\s*::\s*(\w+\s*::\s*)?(system|popen|v?fork|exec\w*|posix_spawnp?)\b|\bsubprocess\s*::\s*(exec|popen)\b/],
+        ["destructive_fs", /\bfs(_err)?\s*::\s*(remove_\w+|rename)\b/],
+        ["native_code", /\bunsafe\b|\bextern\s*("|\{)|\b(no_mangle|export_name|link_section)\b|\b(global_|naked_|llvm_)?asm\s*!|\btransmute\b|\b(libloading|dlopen2?|cc|cmake|pkg_config|vcpkg)\s*::|\b(dlopen|dlsym|loadlibrary\w*|getprocaddress)\b|cargo::?rustc-link-/]
+    ]
+};
+
+function inferForbidden(content = "", facts = null, language = "javascript") {
     if (facts?.ast) {
         return [...new Set(facts.dangerous || [])];
     }
 
     const lower = String(content || "").toLowerCase();
     const forbidden = [];
+    for (const [name, pattern] of LANGUAGE_FORBIDDEN_TEXT[language] || []) {
+        if (pattern.test(lower)) forbidden.push(name);
+    }
 
     if (lower.includes("eval(")) forbidden.push("eval");
     if (lower.includes("process.exit")) forbidden.push("process.exit");
@@ -331,7 +357,9 @@ function extractFacts(content, opts) {
     if (!opts.supported) {
         return {
             ...AstFacts.emptyFacts(),
-            error: `unsupported language: ${opts.language} (supported: ${LANGUAGES.join(", ")})`
+            error: opts.extension
+                ? `unsupported file type: ${opts.extension} (supported: ${Object.keys(EXTENSION_LANGUAGES).join(" ")})`
+                : `unsupported language: ${opts.language} (supported: ${LANGUAGES.join(", ")})`
         };
     }
     try {
@@ -357,7 +385,7 @@ function analyze(content, options = {}) {
         pressure: opts.pressure,
         confidence: opts.confidence,
         budget: opts.budget,
-        forbidden: inferForbidden(content, facts),
+        forbidden: inferForbidden(content, facts, opts.language),
         summary: summarize(content, facts, opts.language),
         analysisStatus: facts.ast === true ? 'complete' : 'incomplete',
         facts
