@@ -16,8 +16,8 @@ const PYTHON = [
   'from ctypes import *\nCDLL(x)'
 ];
 const RUST = [
-  'unsafe', 'extern "C" {}', '#[no_mangle]', 'std::process::Command::new(x)', 'use std::process;',
-  'use std::process::{self, Stdio};', 'tokio::process::Command', 'Command::new(x)', 'duct::cmd',
+  'unsafe', 'extern "C" {}', '#[no_mangle]', 'std::process::Command::new(x)', 'use std::process;\nprocess::Command::new(x)',
+  'use std::process::{self, Stdio};\nprocess::Command::new(x)', 'use std::process::{Command, Stdio};', 'tokio::process::Command', 'Command::new(x)', 'duct::cmd',
   'libloading::Library', 'cc::Build', 'rhai::Engine', 'asm!(x)', 'transmute(x)', 'dlsym(x)',
   'libc::system(x)', 'nix::unistd::fork()', 'subprocess::Exec::cmd', 'py.run(x)', 'cargo:rustc-link-lib=x'
 ];
@@ -39,11 +39,24 @@ test('broken files with harmless process/importlib/ctypes names are not critical
     ['python', 'from ctypes import c_int, sizeof\nsizeof(c_int)\nclass (\n'],
     ['rust', 'fn main() { std::process::exit(1);\n'],
     ['rust', 'fn main() { let id = std::process::id(); std::process::abort();\n'],
-    ['rust', 'use std::process::Stdio;\nfn main() {\n']
+    ['rust', 'use std::process::Stdio;\nfn main() {\n'],
+    ['rust', 'use std::process;\nfn main() { process::exit(1) \n'],
+    ['rust', 'use std::process::{self, Stdio};\nfn main() {\n']
   ]) {
     const ir = SentinelIR.analyze(code, { language });
     assert.equal(ir.analysisStatus, 'incomplete', code);
     assert.notEqual(ir.risk, 'critical', code);
     assert.deepEqual(ir.forbidden, [], code);
   }
+});
+
+test('broken Rust: use std::process; process::exit is not critical, process::Command still is', async () => {
+    const { analyzeAsync: run } = require('..');
+    const exit = await run('use std::process;\nfn main() { process::exit(1) \n', { target: 'a.rs' });
+    assert.equal(exit.analysisStatus, 'incomplete');
+    assert.notEqual(exit.risk, 'critical');
+    assert.deepEqual(exit.forbidden, []);
+    const spawn = await run('use std::process;\nfn main() { process::Command::new("ls"); \n', { target: 'a.rs' });
+    assert.equal(spawn.risk, 'critical');
+    assert.ok(spawn.forbidden.includes('child_process'));
 });

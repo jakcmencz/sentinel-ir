@@ -579,7 +579,10 @@ Since 0.5.9 the text fallback rates a broken Python or Rust file `critical`
 only for something it can also name in `forbidden`. `importlib.reload`,
 `from ctypes import c_int`, `std::process::exit`, `std::process::id` and
 `std::process::Stdio` on their own are no longer `critical`; a bare
-`import pickle`, `import ctypes` or `use std::process;` is, and says why.
+`import pickle`, `import ctypes` or `use std::process;` was, and said why.
+Since 0.5.10 `use std::process;` or `use std::process::{self, Stdio};` in a
+broken Rust file is `critical` (`child_process`) only when the file also
+calls `process::Command`; `use std::process; process::exit(1)` is not.
 
 `analysisStatus` (0.1.3), `language` (0.2.0), `operations.nativeCode`
 (0.4.0) and `parseError` (0.4.3) are additive fields in the
