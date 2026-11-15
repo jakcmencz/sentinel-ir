@@ -30,7 +30,8 @@ Other languages are not supported. An explicit unsupported `language`
 (e.g. `"ruby"`) or, since 0.5.8, a `target` with any other extension (e.g.
 `x.rb`, `main.go`) is reported as `analysisStatus: "incomplete"` with
 `language: "unknown"` and `facts.error: "unsupported file type: .rb (…)"` (or
-`"unsupported language: ruby (…)"`; `compress()` shows it as `facts.reason`)
+`"unsupported language: ruby (…)"`; `compress()` shows it as `facts.reason`; before 0.5.10 an explicit
+`"ruby"` was reported as `language: "ruby"`)
 instead of being parsed with the wrong grammar. Before 0.5.8 an unknown
 extension was parsed as JavaScript and could come back `complete` and `low`. Source that does not parse falls back to
 text heuristics and the IR says so (`facts.ast: false`).
