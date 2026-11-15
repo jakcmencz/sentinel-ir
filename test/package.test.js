@@ -26,7 +26,7 @@ test("the packed tarball loads and analyzes every language", { timeout: 120000 }
     const dir = fs.mkdtempSync(path.join(ROOT, ".pack-"));
     try {
         const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-        const [{ filename }] = JSON.parse(execFileSync(npm, ["pack", "--json", "--pack-destination", dir], { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }));
+        const [{ filename }] = JSON.parse(execFileSync(npm, ["pack", "--json", "--pack-destination", dir], { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], shell: process.platform === "win32" }));
         execFileSync("tar", ["-xzf", path.join(dir, filename), "-C", dir]);
         const script = `
             const S = require(${JSON.stringify(path.join(dir, "package"))});
