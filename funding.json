@@ -5,7 +5,7 @@
     "type": "individual",
     "role": "owner",
     "name": "Jakub (jakcmencz)",
-    "email": "jakubrojicek11@gmail.com",
+    "email": "sentinel.ir.contact@gmail.com",
     "description": "Independent maintainer from the Czech Republic. I design and test Sentinel-IR and sentinel-ir-mcp and approve every release; most of the code is written by an AI coding agent working from my specs, with every change going through tests and CI.",
     "webpageUrl": {
       "url": "https://gitlab.com/jakubrojicek11"
