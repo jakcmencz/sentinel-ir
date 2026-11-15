@@ -11,7 +11,9 @@ const PYTHON = [
   'cffi', 'llvmlite', 'pickle', 'cpickle', 'dill', 'marshal', 'shelve', 'jsonpickle',
   'commands.getstatusoutput(x)', 'pty.spawn(x)', 'asyncio.create_subprocess_exec(x)', 'yaml.load(x)',
   'joblib.load(x)', 'pd.read_pickle(x)', 'LoadLibrary(x)', '__import__', 'importlib.import_module(x)',
-  'compile(x)', 'exec', 'os.startfile(x)'
+  'compile(x)', 'exec', 'os.startfile(x)',
+  'spec.loader.exec_module(m)', 'importlib.util.spec_from_file_location(n, p)', 'runpy.run_path(p)',
+  'from ctypes import *\nCDLL(x)'
 ];
 const RUST = [
   'unsafe', 'extern "C" {}', '#[no_mangle]', 'std::process::Command::new(x)', 'use std::process;',

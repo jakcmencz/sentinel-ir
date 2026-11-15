@@ -162,7 +162,7 @@ function inferConstraints(filePath, consecutiveFailures) {
 // Command::new into a confident "low".
 const LANGUAGE_TEXT = {
     python: {
-        critical: /\bos\s*\.\s*(system|popen\d?|exec\w*|spawn\w*|fork\w*|posix_spawn\w*|startfile)\b|\bimport\s+_?ctypes\b|\b(subprocess|popen2|cffi|llvmlite|c?pickle|_pickle|dill|marshal|shelve|jsonpickle)\b|\bcommands\s*\.\s*getstatus|\bpty\s*\.\s*spawn\b|\bcreate_subprocess_(exec|shell)\b|\byaml\s*\.\s*(unsafe_)?load\b|\bjoblib\s*\.\s*load\b|\bread_pickle\b|\bloadlibrary\b|\b__import__\b|\bimport_module\b|\bcompile\s*\(|\bexec\b/,
+        critical: /\bos\s*\.\s*(system|popen\d?|exec\w*|spawn\w*|fork\w*|posix_spawn\w*|startfile)\b|\bimport\s+_?ctypes\b|\b(subprocess|popen2|cffi|llvmlite|c?pickle|_pickle|dill|marshal|shelve|jsonpickle)\b|\bcommands\s*\.\s*getstatus|\bpty\s*\.\s*spawn\b|\bcreate_subprocess_(exec|shell)\b|\byaml\s*\.\s*(unsafe_)?load\b|\bjoblib\s*\.\s*load\b|\bread_pickle\b|\bloadlibrary\b|\b__import__\b|\b(import_module|exec_module|load_module|load_source|spec_from_file_location|runpy)\b|\bcompile\s*\(|\bexec\b/,
         high: /\bshutil\s*\.\s*(rmtree|move|copy\w*|chown)\b|\brmtree\b|\bos\s*\.\s*(remove|unlink|rmdir|removedirs|renames?|replace|makedirs|mkdir|chmod|chown|truncate|symlink|link)\b|\.\s*(write_text|write_bytes|unlink|rmdir|touch|mkdir|symlink_to|hardlink_to)\s*\(|\bopen\s*\([^)\n]{0,200}["'][rbt]*[wxa+]/,
         network: /\b(requests|urllib\d?|httpx|aiohttp|socket|socketserver|http\s*\.\s*(client|server)|wsgiref|ftplib|smtplib|telnetlib|paramiko|websockets?|flask|fastapi|django|quart|sanic)\b/,
         crypto: /\b(hashlib|hmac|secrets|crypt|cryptography|cryptodome|nacl|bcrypt|jwt|passlib)\b/
@@ -242,7 +242,7 @@ const NET_TEXT = /fetch|axios|(\brequire\s*\(\s*|\bfrom\s+|\bimport\s*\(\s*)["'`
 // incomplete parse is no proof that the import is unused.
 const NATIVE_TEXT = new RegExp([
     /\b_?ctypes\.(cdll|windll|oledll|pydll|pythonapi|memmove|memset|string_at|wstring_at|cfunctype|winfunctype|dlopen)\b/,
-    /\bfrom\s+_?ctypes\s+import\b[^\n]*\b(cdll|windll|oledll|pydll|pythonapi|memmove|memset|string_at|wstring_at|cfunctype|winfunctype|\*)/,
+    /\bfrom\s+_?ctypes\s+import\b[^\n]*\b(cdll|windll|oledll|pydll|pythonapi|memmove|memset|string_at|wstring_at|cfunctype|winfunctype)\b|\bfrom\s+_?ctypes\s+import\s*\*/,
     /\bdlopen\s*\(/,
     /\.set_source\s*\(/,
     /\bprocess\s*\.\s*(dlopen|binding|_linkedbinding)\b/,
@@ -255,7 +255,7 @@ const NATIVE_TEXT = new RegExp([
 // file rated critical by LANGUAGE_TEXT also says which capability it saw.
 const LANGUAGE_FORBIDDEN_TEXT = {
     python: [
-        ["eval", /\b(eval|exec|compile)\s*\(|\bexec\b|\b__import__\b|\bimport_module\b/],
+        ["eval", /\b(eval|exec|compile)\s*\(|\bexec\b|\b__import__\b|\b(import_module|exec_module|load_module|load_source|spec_from_file_location|runpy)\b/],
         ["child_process", /\b(subprocess|popen2)\b|\bcreate_subprocess_(exec|shell)\b|\bpty\s*\.\s*spawn\b|\bcommands\s*\.\s*getstatus/],
         ["process_spawn", /\bos\s*\.\s*(system|popen\d?|exec\w*|spawn\w*|fork\w*|posix_spawn\w*|startfile)\b|\bsubprocess\s*\.\s*\w+\s*\(|\bcreate_subprocess_(exec|shell)\b|\bpty\s*\.\s*spawn\b/],
         ["destructive_fs", /\brmtree\b|\bshutil\s*\.\s*move\b|\bos\s*\.\s*(remove|unlink|rmdir|removedirs|truncate)\b|\.\s*(unlink|rmdir)\s*\(/],
