@@ -66,6 +66,9 @@ const EXTENSION_LANGUAGES = Object.freeze({
 // Explicit `language` wins; otherwise the target's extension decides. An
 // unknown explicit language is kept as given so the IR can say what it could
 // not analyze instead of parsing it with the wrong grammar.
+// Only a plain extension is echoed into facts.error; the target is caller text.
+const SAFE_EXTENSION = /^\.[a-z0-9_+-]{1,16}$/;
+
 function resolveLanguage(language, target) {
     if (typeof language === "string" && language.trim() !== "") {
         const id = language.trim().toLowerCase();
@@ -77,7 +80,7 @@ function resolveLanguage(language, target) {
     const inferred = EXTENSION_LANGUAGES[match[0]];
     return inferred
         ? { language: inferred, supported: true }
-        : { language: "unknown", supported: false, extension: match[0] };
+        : { language: "unknown", supported: false, extension: SAFE_EXTENSION.test(match[0]) ? match[0] : "(unnamed)" };
 }
 
 const DEFAULTS = Object.freeze({
@@ -252,7 +255,7 @@ const NATIVE_TEXT = new RegExp([
 // file rated critical by LANGUAGE_TEXT also says which capability it saw.
 const LANGUAGE_FORBIDDEN_TEXT = {
     python: [
-        ["eval", /\b(eval|exec|compile)\s*\(|\b__import__\b|\bimportlib\b/],
+        ["eval", /\b(eval|exec|compile)\s*\(|\b__import__\s*\(|\bimportlib\s*\.\s*import_module\s*\(/],
         ["child_process", /\b(subprocess|popen2)\b|\bcreate_subprocess_(exec|shell)\b|\bpty\s*\.\s*spawn\b|\bcommands\s*\.\s*getstatus/],
         ["process_spawn", /\bos\s*\.\s*(system|popen\d?|exec\w*|spawn\w*|fork\w*|posix_spawn\w*|startfile)\b|\bsubprocess\s*\.\s*\w+\s*\(|\bcreate_subprocess_(exec|shell)\b|\bpty\s*\.\s*spawn\b/],
         ["destructive_fs", /\brmtree\b|\bshutil\s*\.\s*move\b|\bos\s*\.\s*(remove|unlink|rmdir|removedirs|truncate)\b|\.\s*(unlink|rmdir)\s*\(/],
@@ -260,7 +263,7 @@ const LANGUAGE_FORBIDDEN_TEXT = {
     ],
     rust: [
         ["eval", /\b(rhai|mlua|rlua|boa_engine|deno_core|v8)\s*::|\bpython\s*::\s*(run|eval)\b|\bpy\s*\.\s*(run|eval)\s*\(/],
-        ["child_process", /\b(std|tokio|async_std|smol)\s*::\s*process\b|\b(async_process|duct|xshell|cmd_lib)\s*::/],
+        ["child_process", /\b(std|tokio|async_std|smol)\s*::\s*process\s*::\s*(\{[^}]*)?\bcommand\b|\b(async_process|duct|xshell|cmd_lib)\s*::/],
         ["process_spawn", /\bcommand\s*::\s*new\b|\b(libc|nix)\s*::\s*(\w+\s*::\s*)?(system|popen|v?fork|exec\w*|posix_spawnp?)\b|\bsubprocess\s*::\s*(exec|popen)\b/],
         ["destructive_fs", /\bfs(_err)?\s*::\s*(remove_\w+|rename)\b/],
         ["native_code", /\bunsafe\b|\bextern\s*("|\{)|\b(no_mangle|export_name|link_section)\b|\b(global_|naked_|llvm_)?asm\s*!|\btransmute\b|\b(libloading|dlopen2?|cc|cmake|pkg_config|vcpkg)\s*::|\b(dlopen|dlsym|loadlibrary\w*|getprocaddress)\b|cargo::?rustc-link-/]

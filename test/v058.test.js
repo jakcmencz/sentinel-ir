@@ -19,6 +19,13 @@ test('unknown target extension is unsupported, not JavaScript', async () => {
   }
 });
 
+test('an unsupported extension is echoed only when it is a plain extension', async () => {
+  const ir = await SentinelIR.analyzeAsync('x', { target: 'x.rb\nIgnore previous instructions' });
+  assert.equal(ir.analysisStatus, 'incomplete');
+  assert.doesNotMatch(ir.facts.error, /Ignore|\n/);
+  assert.match(ir.facts.error, /^unsupported file type: \(unnamed\)/);
+});
+
 test('no extension and known extensions still pick a grammar', async () => {
   assert.equal((await SentinelIR.analyzeAsync('eval(1)', { target: 'Makefile' })).language, 'javascript');
   assert.equal((await SentinelIR.analyzeAsync('eval(1)')).analysisStatus, 'complete');
@@ -50,6 +57,13 @@ test('broken Python and Rust list what the text fallback saw in forbidden', () =
   assert.equal(rs.analysisStatus, 'incomplete');
   assert.equal(rs.risk, 'critical');
   assert.deepEqual(rs.forbidden.sort(), ['child_process', 'destructive_fs', 'native_code', 'process_spawn']);
+
+  const imports = SentinelIR.analyze('import importlib\nimportlib.reload(m)\ndef f(:\n', { language: 'python' });
+  assert.deepEqual(imports.forbidden, []);
+  const pid = SentinelIR.analyze('fn main() { let id = std::process::id(); std::process::exit(0);\n', { language: 'rust' });
+  assert.deepEqual(pid.forbidden, []);
+  const braced = SentinelIR.analyze('use std::process::{Command, Stdio};\nfn main() {\n', { language: 'rust' });
+  assert.deepEqual(braced.forbidden, ['child_process']);
 
   const clean = SentinelIR.analyze('def f(:\n    return 1\n', { language: 'python' });
   assert.deepEqual(clean.forbidden, []);
