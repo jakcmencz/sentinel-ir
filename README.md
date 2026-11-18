@@ -465,7 +465,7 @@ Module names cut into pieces are put back together:
 is `os.system`. A local function named `require`, `getattr(self, name)` and
 `obj[key]()` on ordinary objects stay `low`. On 9 000 files of real code
 (npm packages, the Python standard library and dist-packages, crates) 0.5.12
-changed the risk of 1.3 % (120 files): mostly plugin loaders (`require(mod)`,
+changed the risk of 1.3 % (121 files): mostly plugin loaders (`require(mod)`,
 `importlib.import_module(name)`) and files that did not parse. The names stay in
 the IR as data; `suspicious_text` only tells the agent not to follow them.
 - `mission.objective` (`ir.objective`): `security_refactor` | `filesystem_simplification` |
