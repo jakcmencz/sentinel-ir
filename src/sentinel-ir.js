@@ -433,7 +433,7 @@ function expandDecision(decision, sourceIr) {
 
 // Loads the bundled WebAssembly grammars. Without arguments only JavaScript is
 // loaded; pass e.g. { languages: ["typescript", "tsx"] } before calling the
-// synchronous analyze() on TypeScript.
+// synchronous analyze() on TypeScript. analyze() has no other parser.
 async function initializeWasm(options = {}) {
     const requested = Array.isArray(options?.languages) ? options.languages : ["javascript"];
     for (const language of requested) {

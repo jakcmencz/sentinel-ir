@@ -159,19 +159,7 @@ const TreeParser = {
     parser: null,
     backend: null,
 
-    // Výchozí cesta pro platformy, kde fungují nativní moduly.
-    init() {
-        if (this.parser && this.backend === "native") return;
-
-        const Parser = require("tree-sitter");
-        const JavaScript = require("tree-sitter-javascript");
-
-        this.parser = new Parser();
-        this.parser.setLanguage(JavaScript);
-        this.backend = "native";
-    },
-
-    // Android/WASM: sdílí jednu rozpracovanou inicializaci.
+    // Concurrent callers share one pending initialization.
     wasmInitPromise: null,
     wasmRuntimePromise: null,
 
@@ -261,10 +249,7 @@ const TreeParser = {
             if (last >= 0xD800 && last <= 0xDBFF && end < content.length) end--;
             return content.slice(index, end);
         };
-        // The native binding has no progressCallback; it times out by itself.
-        const native = parser === this.parser && this.backend === "native";
-        if (native) parser.setTimeoutMicros(this.parseTimeoutMs * 1000);
-        const tree = native ? parser.parse(input) : parser.parse(input, null, options);
+        const tree = parser.parse(input, null, options);
         if (tree) return tree;
         // A cancelled parse is resumed by the next call unless reset.
         parser.reset();
@@ -272,14 +257,7 @@ const TreeParser = {
     },
 
     parserFor(language) {
-        if (language === "javascript") {
-            if (!this.parser) {
-                this.init();
-            }
-            return this.parser;
-        }
-
-        const parser = this.languageParsers[language];
+        const parser = language === "javascript" ? this.parser : this.languageParsers[language];
         if (!parser) {
             throw new Error(
                 `The ${language} parser is not initialized. ` +
