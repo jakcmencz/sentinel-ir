@@ -2,7 +2,7 @@ stages:
   - test
   - publish
 
-# tree-sitter ships native bindings, so test on every supported Node line.
+# Test on every supported Node line.
 unit_tests:
   stage: test
   image: node:${NODE_VERSION}

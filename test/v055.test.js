@@ -213,20 +213,24 @@ test("the default parse budget stops hostile input", async () => {
     assert.equal(ir.analysisStatus, "incomplete");
 });
 
-test("the native parser used by analyze() keeps the same budget", { skip: !hasNative() }, () => {
+test("analyze() before initializeWasm() is incomplete and names the fix", () => {
     const { execFileSync } = require("node:child_process");
     const script = `
-        const TreeParser = require(${JSON.stringify(require.resolve("../src/tree-parser"))});
         const SentinelIR = require(${JSON.stringify(require.resolve(".."))});
-        TreeParser.parseTimeoutMs = 300;
-        const slow = SentinelIR.analyze("require('child_process').exec(c);" + "->".repeat(8192), { target: "a.js" });
-        const next = SentinelIR.analyze("const fs = require('fs'); fs.rmSync(p);", { target: "a.js" });
-        console.log(JSON.stringify([TreeParser.backend, slow.analysisStatus, slow.risk, slow.facts.error, next.analysisStatus, next.risk]));
+        const ir = SentinelIR.analyze("const fs = require('fs'); fs.rmSync(p);", { target: "a.js" });
+        console.log(JSON.stringify([ir.analysisStatus, ir.risk, ir.facts.error]));
     `;
-    const started = Date.now();
     const out = JSON.parse(execFileSync(process.execPath, ["-e", script], { encoding: "utf8", timeout: 20000 }));
-    assert.ok(Date.now() - started < 10000);
-    assert.deepEqual(out, ["native", "incomplete", "critical", "source took longer than 300 ms to parse", "complete", "high"]);
+    assert.deepEqual(out, ["incomplete", "high",
+        "The javascript parser is not initialized. Use analyzeAsync() or initializeWasm({ languages }) first."]);
+});
+
+test("the package has no native dependencies or install scripts", () => {
+    const pkg = require("../package.json");
+    assert.deepEqual(Object.keys(pkg.dependencies), ["web-tree-sitter"]);
+    assert.equal(pkg.optionalDependencies, undefined);
+    assert.equal(pkg.scripts.install, undefined);
+    assert.equal(pkg.scripts.postinstall, undefined);
 });
 
 test("crypto-only broken source is not reported as network", async () => {
@@ -243,13 +247,3 @@ test("crypto-only broken source is not reported as network", async () => {
         assert.equal(ir.risk, "medium", target);
     }
 });
-
-function hasNative() {
-    try {
-        require("tree-sitter");
-        require("tree-sitter-javascript");
-        return true;
-    } catch {
-        return false;
-    }
-}

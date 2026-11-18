@@ -81,11 +81,9 @@ to rewrite code it can no longer see.
 npm install sentinel-ir
 ```
 
-Requires Node.js 20 or newer. The native `tree-sitter` packages are optional dependencies.
-npm 11 may print `install-scripts … not yet covered by allowScripts: tree-sitter,
-tree-sitter-javascript`; that is npm asking whether to build the optional
-native parser. Everything works without it, because `analyzeAsync()` uses the
-bundled WebAssembly parsers. When no parser has been initialized, `analyze()` attempts to initialize the native parser and does not automatically fall back to WebAssembly if that fails. Use `analyzeAsync()` to initialize the bundled WebAssembly parser before analysis.
+Requires Node.js 20 or newer. The only dependency is `web-tree-sitter`:
+every grammar ships as bundled WebAssembly, so installing runs no install
+scripts and loads no native `.node` binaries (since 0.5.11).
 
 ## Usage
 
@@ -373,10 +371,12 @@ with a harmless member that must not be reported.
 
 ### `analyze(content, options?)` → `ir`
 
-Synchronous analysis. If no parser has been initialized, it attempts to
-load the optional native `tree-sitter` packages. If loading fails, the
-result is `analysisStatus: "incomplete"` and uses text-based fallback
-heuristics. It does not automatically switch to WebAssembly.
+Synchronous analysis with the WebAssembly parsers that are already
+initialized. Call `initializeWasm()` once first (or use `analyzeAsync()`);
+without it the result is `analysisStatus: "incomplete"`, uses text-based
+fallback heuristics and `facts.error` says which parser to initialize. Up to
+0.5.10 `analyze()` loaded the optional native `tree-sitter` packages for
+JavaScript instead; they are no longer dependencies.
 
 Use `analyzeAsync()` for analysis with the bundled WebAssembly parser.
 Both APIs return the full IR, including raw AST facts under `ir.facts`.
@@ -401,15 +401,15 @@ is a valid value. The defaults are exported as `DEFAULTS`.
 ### `analyzeAsync(content, options?)` → `Promise<ir>`
 
 Initializes the bundled WebAssembly parser for the selected language and then
-analyzes the source. Use it on platforms where the optional native parser is unavailable.
+analyzes the source.
 Parser initialization failures reject the promise; source-analysis failures
 are represented by `analysisStatus: "incomplete"`.
 
 ### `initializeWasm({ languages }?)` → `Promise<void>`
 
 Initializes the bundled WebAssembly parsers without analyzing source
-(default: `["javascript"]`). Needed before the synchronous `analyze()` on
-TypeScript, Python or Rust; without it `analyze()` returns `analysisStatus: "incomplete"` for
+(default: `["javascript"]`). Needed before the synchronous `analyze()`;
+without it `analyze()` returns `analysisStatus: "incomplete"` for
 them. Use `analyzeAsync()` for the usual one-step workflow. Rejects for
 an unsupported language.
 
