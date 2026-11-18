@@ -226,8 +226,10 @@ function suspiciousName(kind, value) {
     return INSTRUCTION_TEXT.test(words) || INSTRUCTION_TEXT.test(checked.toLowerCase());
 }
 
-function lineOf(content, value) {
-    const at = String(content || "").indexOf(String(value).split(" ").pop());
+// The line of the name itself; a route is searched by its path.
+function lineOf(content, kind, value) {
+    const name = String(value);
+    const at = String(content || "").indexOf(kind === "routes" ? name.slice(name.indexOf(" ") + 1) : name);
     return at < 0 ? 1 : String(content).slice(0, at).split("\n").length;
 }
 
@@ -238,7 +240,7 @@ function markSuspiciousText(facts, content) {
         for (const value of facts[kind] || []) {
             if (suspiciousName(kind, value)) {
                 const shown = String(value).replace(HIDDEN_CHARS_ALL, c => c === " " ? " " : `\\u{${c.codePointAt(0).toString(16)}}`);
-                found.push({ signal: "suspicious_text", evidence: `${kind}: ${shown}`, line: lineOf(content, value) });
+                found.push({ signal: "suspicious_text", evidence: `${kind}: ${shown}`, line: lineOf(content, kind, value) });
             }
         }
     }
