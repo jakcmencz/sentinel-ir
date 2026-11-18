@@ -2292,7 +2292,7 @@ function isGlobalHost(node) {
     if (node?.type !== "identifier") return false;
     const name = text(node);
     if (!GLOBAL_HOSTS.has(name)) return false;
-    return name === "globalThis" ? isUnshadowedGlobalThis(node) : !isNameShadowed(node, name);
+    return !isNameShadowed(node, name);
 }
 
 // The subscript in a callee chain whose name is hidden: an encoded or split
