@@ -45,6 +45,12 @@ export interface Operations {
     secretComparison: boolean;
     unsafeDeserialization: boolean;
     nativeCode: boolean;
+    /** Since 0.5.12: require(name), import(url), __import__(name). */
+    dynamicImport?: boolean;
+    /** Since 0.5.12: global["pro" + "cess"], getattr(os, name). */
+    dynamicReference?: boolean;
+    /** Since 0.5.12: a name that reads like an instruction to an agent. */
+    suspiciousText?: boolean;
 }
 
 export interface Facts {

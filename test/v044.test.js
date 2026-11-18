@@ -85,7 +85,8 @@ test('text fallback flags fs deletes and writes in unparseable code', () => {
     assert.equal(ir.analysisStatus, 'incomplete');
     assert.equal(ir.risk, 'high', code);
   }
-  assert.equal(analyze('const x = items.rm;\nif (', 'a.js').risk, 'low');
+  // An unparseable file is never low (0.5.12).
+  assert.equal(analyze('const x = items.rm;\nif (', 'a.js').risk, 'medium');
 });
 
 test('child_process bindings are unchanged by the shared binding walker', () => {
@@ -207,8 +208,8 @@ test('text fallback flags fs-extra deletes and HTTP module loads in unparseable 
     ['fs.remove(p);\nif (', 'high'],
     ['const net = require("https");\nnet.get(u);\nif (', 'medium'],
     ['import got from "got";\nif (', 'medium'],
-    ['const x = list.remove(i);\nif (', 'low'],
-    ['const x = require("httpx-lite");\nif (', 'low']
+    ['const x = list.remove(i);\nif (', 'medium'],
+    ['const x = require("httpx-lite");\nif (', 'medium']
   ]) {
     const ir = analyze(code, 'a.js');
     assert.equal(ir.analysisStatus, 'incomplete');

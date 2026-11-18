@@ -107,6 +107,15 @@ const NET_BINDING_SPEC = {
 const MODULE_CALLBACKS = new Set(["then"]);
 
 const CHILD_PROCESS_MODULES = new Set(["child_process", "node:child_process"]);
+// node:vm compiles and runs source text, the same capability as eval.
+const VM_MODULES = new Set(["vm", "node:vm"]);
+// A module loaded from a URL or inline source is code the file does not contain.
+const REMOTE_SPECIFIER = /^(https?|data|blob):/i;
+// Objects whose properties reach process, require, eval or Function.
+const GLOBAL_HOSTS = new Set(["global", "globalThis", "window", "self", "process", "module"]);
+const SENSITIVE_GLOBALS = new Set(["process", "require", "eval", "Function", "mainModule", "binding", "dlopen", "constructor"]);
+// Calls that turn encoded data into a name: String.fromCharCode(...), atob(...).
+const NAME_DECODERS = /^(String\.fromCharCode|String\.fromCodePoint|atob|unescape|decodeURIComponent|decodeURI|Buffer\.from|escape)$/;
 
 // Modules whose exports load or call native code: FFI, raw memory, .node addon loaders.
 const NATIVE_MODULES = new Set([
@@ -164,6 +173,44 @@ function stringLiteral(node) {
         return raw.replace(/^["'`]/, "").replace(/["'`]$/, "");
     }
     return null;
+}
+
+// A string the source spells out, also when it is cut into pieces:
+// "child_" + "process", `child_process`, ("vm"). Template strings with ${...} are not.
+function constantString(node, depth = 0) {
+    if (!node || depth > 50) return null;
+    if (node.type === "string") return stringLiteral(node);
+    if (node.type === "template_string") {
+        return (named(node) || []).some(child => child.type === "template_substitution") ? null : stringLiteral(node);
+    }
+    if (node.type === "parenthesized_expression") return constantString((named(node) || [])[0], depth + 1);
+    if (node.type === "binary_expression" && text(node.children?.[1]) === "+") {
+        const left = constantString(field(node, "left"), depth + 1);
+        const right = left === null ? null : constantString(field(node, "right"), depth + 1);
+        return left === null || right === null ? null : left + right;
+    }
+    return null;
+}
+
+// The index of obj[...] is built at run time from encoded or split pieces:
+// "pro" + "cess", String.fromCharCode(114, 101), atob("ZXZhbA=="), [..].join("").
+function isObfuscatedName(node, depth = 0) {
+    if (!node || depth > 50) return false;
+    if (node.type === "parenthesized_expression") return isObfuscatedName((named(node) || [])[0], depth + 1);
+    if (node.type === "binary_expression" && text(node.children?.[1]) === "+") {
+        return constantString(node) !== null ||
+            isObfuscatedName(field(node, "left"), depth + 1) || isObfuscatedName(field(node, "right"), depth + 1);
+    }
+    if (node.type === "call_expression") {
+        const callee = field(node, "function");
+        const name = exprText(callee).replace(/\s+/g, "");
+        if (NAME_DECODERS.test(name)) return true;
+        if (callee?.type === "member_expression" && ["join", "reverse", "toString", "replace", "split", "map"].includes(text(field(callee, "property")))) {
+            return isObfuscatedName(field(callee, "object"), depth + 1) || field(callee, "object")?.type === "array" ||
+                field(callee, "object")?.type === "call_expression";
+        }
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1603,7 +1650,10 @@ function emptyFacts() {
             cryptoUse: false,
             secretComparison: false,
             unsafeDeserialization: false,
-            nativeCode: false
+            nativeCode: false,
+            dynamicImport: false,
+            dynamicReference: false,
+            suspiciousText: false
         },
         dangerous: [],
         riskSignals: []
@@ -1732,15 +1782,7 @@ function extractFromTree(ast) {
                 const source = stringLiteral(field(requireClause || node, "source"));
                 if (source) {
                     imports.add(source);
-                    if (CHILD_PROCESS_MODULES.has(source)) {
-                        const evidence = requireClause ? "require(child_process)" : "import(child_process)";
-                        facts.operations.childProcess = true;
-                        calls.process.add(evidence);
-                        signal("child_process_import", evidence, node);
-                    }
-                    if (isNativeAddonPath(source)) {
-                        markNative(facts, calls, signal, `${requireClause ? "require" : "import"}(*.node)`, node);
-                    }
+                    visitModuleSource(source, requireClause ? "require" : "import", node, { facts, calls, signal });
                 }
                 break;
             }
@@ -2220,6 +2262,64 @@ function isSpawnCall({ object, property, raw, callee }, host, spawnBindings) {
 
     return !SPAWN_ONLY_WHEN_BOUND.has(property);
 }
+// What loading a module named in the source means: child_process and vm are
+// code execution, a URL or data: module is code the file does not contain.
+function visitModuleSource(source, how, node, { facts, calls, signal }) {
+    if (CHILD_PROCESS_MODULES.has(source)) {
+        const evidence = `${how}(child_process)`;
+        facts.operations.childProcess = true;
+        calls.process.add(evidence);
+        signal("child_process_import", evidence, node);
+    }
+    if (VM_MODULES.has(source)) {
+        const evidence = `${how}(vm)`;
+        facts.operations.dynamicEval = true;
+        calls.dynamic.add(evidence);
+        signal("dynamic_code", evidence, node);
+    }
+    if (REMOTE_SPECIFIER.test(source)) {
+        const evidence = `${how}(${source})`;
+        facts.operations.dynamicImport = true;
+        calls.dynamic.add(evidence);
+        signal("dynamic_import", evidence, node);
+    }
+    if (isNativeAddonPath(source)) {
+        markNative(facts, calls, signal, `${how}(*.node)`, node);
+    }
+}
+
+function isGlobalHost(node) {
+    if (node?.type !== "identifier") return false;
+    const name = text(node);
+    if (!GLOBAL_HOSTS.has(name)) return false;
+    return name === "globalThis" ? isUnshadowedGlobalThis(node) : !isNameShadowed(node, name);
+}
+
+// The subscript in a callee chain whose name is hidden: an encoded or split
+// index on any object, or any computed index on global / globalThis / window /
+// self / process / module.
+function hiddenCallee(callee, depth = 0) {
+    let node = callee;
+    while (node && depth++ < 50) {
+        if (node.type === "parenthesized_expression") { node = (named(node) || [])[0]; continue; }
+        if (node.type === "subscript_expression") {
+            const object = unwrapTypeOnly(field(node, "object"));
+            const index = field(node, "index");
+            const literal = index ? stringLiteral(index) : null;
+            if (index && literal === null && index.type !== "number" &&
+                (isObfuscatedName(index) || isGlobalHost(object))) return node;
+            // global["process"]["exit"](1): the literal spelling of a reach into process or require.
+            if (literal !== null && SENSITIVE_GLOBALS.has(literal) && isGlobalHost(object)) return node;
+            node = object;
+            continue;
+        }
+        if (node.type === "member_expression") { node = unwrapTypeOnly(field(node, "object")); continue; }
+        if (node.type === "call_expression") { node = unwrapTypeOnly(field(node, "function")); continue; }
+        return null;
+    }
+    return null;
+}
+
 function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings, fsBindings, netBindings, evalAliases, nativeBindings }) {
     const callee = unwrapTypeOnly(field(node, "function") || (named(node) || [])[0]);
     const { object, property, raw } = callTarget(node);
@@ -2238,22 +2338,59 @@ function visitCall(node, { facts, routes, imports, calls, signal, spawnBindings,
     // require("child_process") / import("fs") / require("fs") -> imports
     const importer = !object && (property === "require" || property === "import");
     if (importer) {
-        const source = stringLiteral(callArgs[0]);
+        const source = constantString(callArgs[0]);
         if (source) {
             imports.add(source);
-            if (CHILD_PROCESS_MODULES.has(source)) {
-                const evidence = `${property}(child_process)`;
-                facts.operations.childProcess = true;
-                calls.process.add(evidence);
-                signal("child_process_import", evidence, node);
-            }
-            if (isNativeAddonPath(source)) {
-                markNative(facts, calls, signal, `${property}(*.node)`, node);
-            }
+            visitModuleSource(source, property, node, { facts, calls, signal });
         } else if (isNativeAddonArg(callArgs[0])) {
             markNative(facts, calls, signal, `${property}(*.node)`, node);
+        } else if (callArgs[0] && (property === "import" || !isNameShadowed(callee, "require"))) {
+            // require(name) / import(url): which module runs is decided at run time.
+            const evidence = `${property}(${codeText(callArgs[0])})`;
+            facts.operations.dynamicImport = true;
+            calls.dynamic.add(evidence);
+            signal("dynamic_import", evidence, node);
         }
         return;
+    }
+
+    // [].constructor.constructor("code") is Function("code").
+    if (property === "constructor" && /(\.constructor|\[\s*["'`]constructor["'`]\s*\])$/.test(object || "")) {
+        const evidence = raw || "constructor.constructor";
+        facts.operations.dynamicEval = true;
+        calls.dynamic.add(evidence);
+        signal("dynamic_code", evidence, node);
+        return;
+    }
+
+    // eval.call(null, s), Function.apply(null, [s]), eval.bind(null)(s)
+    if ((object === "eval" || object === "Function") && (property === "call" || property === "apply" || property === "bind") &&
+        !isNameShadowed(callee, object)) {
+        const evidence = raw || `${object}.${property}`;
+        facts.operations.dynamicEval = true;
+        calls.dynamic.add(evidence);
+        signal("dynamic_code", evidence, node);
+        return;
+    }
+
+    // p.then(eval), [s].map(eval): eval handed over as a value runs code just the same.
+    const evalArgument = callArgs.find(arg => arg?.type === "identifier" &&
+        (text(arg) === "eval" || text(arg) === "Function") && !isNameShadowed(arg, text(arg)));
+    if (evalArgument) {
+        const evidence = `${raw || "call"}(${text(evalArgument)})`;
+        facts.operations.dynamicEval = true;
+        calls.dynamic.add(evidence);
+        signal("dynamic_code", evidence, node);
+    }
+
+    // global["pro" + "cess"]["ex" + "it"](1), globalThis[String.fromCharCode(...)]("fs"),
+    // obj[atob("ZXZhbA==")](s): the called name is hidden from static analysis.
+    const hidden = hiddenCallee(callee);
+    if (hidden) {
+        const evidence = codeText(hidden);
+        facts.operations.dynamicReference = true;
+        calls.dynamic.add(evidence);
+        signal("dynamic_reference", evidence, node);
     }
 
     // createRequire(url)("./addon.node"), module.require("./addon.node"), r("./addon.node")
@@ -2717,6 +2854,8 @@ function dangerousOf(operations) {
     if (operations.diskDelete) dangerous.push("destructive_fs");
     if (operations.unsafeDeserialization) dangerous.push("unsafe_deserialization");
     if (operations.nativeCode) dangerous.push("native_code");
+    if (operations.dynamicImport) dangerous.push("dynamic_import");
+    if (operations.dynamicReference) dangerous.push("dynamic_reference");
     return dangerous;
 }
 
@@ -2724,8 +2863,10 @@ function dangerousOf(operations) {
  * Risk from syntax, not from substrings:
  *   critical  dynamic code execution, process spawning, unsafe deserialization
  *             or native code (FFI, native addons, raw memory)
- *   high      destructive filesystem operations
- *   medium    other filesystem writes, network I/O, crypto / secret handling
+ *   high      destructive filesystem operations, modules or names chosen at
+ *             run time (require(name), import(url), global["pro" + "cess"])
+ *   medium    other filesystem writes, network I/O, crypto / secret handling,
+ *             names that read as instructions to an AI agent
  *   low       pure computation or read-only
  */
 function riskOf(facts) {
@@ -2733,10 +2874,10 @@ function riskOf(facts) {
 
     if (operations.dynamicEval || operations.processSpawn || operations.childProcess ||
         operations.unsafeDeserialization || operations.nativeCode) return "critical";
-    if (operations.diskDelete) return "high";
+    if (operations.diskDelete || operations.dynamicImport || operations.dynamicReference) return "high";
     if (operations.diskWrite) return "medium";
     if (operations.outboundHttp || operations.inboundHttp) return "medium";
-    if (operations.cryptoUse || operations.secretComparison) return "medium";
+    if (operations.cryptoUse || operations.secretComparison || operations.suspiciousText) return "medium";
     return "low";
 }
 

@@ -53,13 +53,16 @@ const RUST = [
     ["fn f() { let x = 1; }", "low"]
 ];
 
+// A file that did not parse is never low (0.5.12).
+const floor = risk => (risk === "low" ? "medium" : risk);
+
 test("broken Python keeps the risk of what it contains", async () => {
     for (const [code, risk] of PYTHON) {
         for (const source of [code + BROKEN_PY, BROKEN_PY + code]) {
             const ir = await analyze(source, "a.py");
             assert.equal(ir.analysisStatus, "incomplete", source);
             assert.equal(ir.facts.ast, false, source);
-            assert.equal(ir.risk, risk, source);
+            assert.equal(ir.risk, floor(risk), source);
         }
     }
 });
@@ -70,7 +73,7 @@ test("broken Rust keeps the risk of what it contains", async () => {
             const ir = await analyze(source, "a.rs");
             assert.equal(ir.analysisStatus, "incomplete", source);
             assert.equal(ir.facts.ast, false, source);
-            assert.equal(ir.risk, risk, source);
+            assert.equal(ir.risk, floor(risk), source);
         }
     }
 });
@@ -93,8 +96,8 @@ test("source nested too deeply to analyze keeps its risk", async () => {
         ["fn f() { let x = " + deep(30000) + "; std::process::Command::new(\"sh\"); }", "a.rs", "critical"],
         ["fn f() { let x = " + deep(30000) + "; std::fs::write(p, b); }", "a.rs", "high"],
         ["require('child_process').exec(c); x = " + deep(30000), "a.js", "critical"],
-        ["x = " + deep(30000), "a.py", "low"],
-        ["fn f() { let x = " + deep(30000) + "; }", "a.rs", "low"]
+        ["x = " + deep(30000), "a.py", "medium"],
+        ["fn f() { let x = " + deep(30000) + "; }", "a.rs", "medium"]
     ];
     for (const [code, target, risk] of cases) {
         const ir = await analyze(code, target);
@@ -125,17 +128,17 @@ test("valid code is unchanged: comments and strings are still not code", async (
 });
 
 test("Python and Rust patterns stay in their own language", async () => {
-    assert.equal((await analyze("x.system(c); subprocess; if (", "a.js")).risk, "low");
-    assert.equal((await analyze("fn f() { subprocess(); }" + BROKEN_RS, "a.rs")).risk, "low");
-    assert.equal((await analyze("unsafe = 1\nCommand.new(x)" + BROKEN_PY, "a.py")).risk, "low");
+    assert.equal((await analyze("x.system(c); subprocess; if (", "a.js")).risk, "medium");
+    assert.equal((await analyze("fn f() { subprocess(); }" + BROKEN_RS, "a.rs")).risk, "medium");
+    assert.equal((await analyze("unsafe = 1\nCommand.new(x)" + BROKEN_PY, "a.py")).risk, "medium");
 });
 
 test("words that only contain a pattern do not raise the risk", async () => {
     for (const code of ["ossystem = 1", "my_subprocesses = []", "requests_total = 0", "unpickled = x", "execute(q)"]) {
-        assert.equal((await analyze(code + BROKEN_PY, "a.py")).risk, "low", code);
+        assert.equal((await analyze(code + BROKEN_PY, "a.py")).risk, "medium", code);
     }
     for (const code of ["fn unsafely() {}", "fn f() { let commander = 1; }", "fn f() { hyperlink(); }", "fn f() { transmuted(); }"]) {
-        assert.equal((await analyze(code + BROKEN_RS, "a.rs")).risk, "low", code);
+        assert.equal((await analyze(code + BROKEN_RS, "a.rs")).risk, "medium", code);
     }
 });
 
@@ -170,7 +173,7 @@ test("concurrent and repeated analysis gives the same answer", async () => {
     const inputs = [...PYTHON.map(([c, r]) => [c + BROKEN_PY, "a.py", r]), ...RUST.map(([c, r]) => [c + BROKEN_RS, "a.rs", r])];
     for (let round = 0; round < 3; round++) {
         const results = await Promise.all(inputs.map(([code, target]) => analyze(code, target)));
-        results.forEach((ir, i) => assert.equal(ir.risk, inputs[i][2], inputs[i][0]));
+        results.forEach((ir, i) => assert.equal(ir.risk, floor(inputs[i][2]), inputs[i][0]));
     }
 });
 
@@ -181,7 +184,7 @@ test("a parse that runs past its time budget is incomplete and keeps its risk", 
     try {
         const slow = "->".repeat(8192);
         const cases = [
-            [slow, "a.js", "low"],
+            [slow, "a.js", "medium"],
             ["require('child_process').exec(c);" + slow, "a.js", "critical"],
             [slow + "fs.writeFileSync(p, d);", "a.ts", "high"],
             ["import os\nos.system(c)\n" + "a::".repeat(1 << 15), "a.py", "critical"],
