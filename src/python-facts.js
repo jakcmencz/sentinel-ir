@@ -39,6 +39,12 @@ const PROCESS_CALLS = new Set([
     "popen2.Popen3", "popen2.Popen4", "commands.getoutput", "commands.getstatusoutput", "commands.getstatus"
 ]);
 
+// Modules whose attributes run code, spawn processes or delete files: a name
+// looked up on them at run time (getattr(os, name)) can be any of those.
+const SENSITIVE_MODULES = new Set([
+    "builtins", "os", "posix", "nt", "subprocess", "importlib", "shutil", "pty",
+    "pickle", "marshal", "runpy", "code", "codeop", "multiprocessing", "ctypes"
+]);
 const DYNAMIC_CALLS = new Set(["builtins.eval", "builtins.exec", "builtins.compile"]);
 
 const DESERIALIZE_CALLS = new Set([
@@ -167,6 +173,24 @@ function stringLiteral(node) {
         .filter(child => child.type === "string_content")
         .map(child => child.text)
         .join("");
+}
+
+// A string the source spells out, also when it is cut into pieces:
+// "o" + "s", "o" "s", ("os"). f-strings with {...} are not.
+function constantString(node, depth = 0) {
+    if (!node || depth > 50) return null;
+    if (node.type === "string") return stringLiteral(node);
+    if (node.type === "parenthesized_expression") return constantString(named(node)[0], depth + 1);
+    if (node.type === "concatenated_string") {
+        const parts = named(node).map(part => constantString(part, depth + 1));
+        return parts.some(part => part === null) ? null : parts.join("");
+    }
+    if (node.type === "binary_operator" && text(field(node, "operator")) === "+") {
+        const left = constantString(field(node, "left"), depth + 1);
+        const right = left === null ? null : constantString(field(node, "right"), depth + 1);
+        return left === null || right === null ? null : left + right;
+    }
+    return null;
 }
 
 function scopeOf(node) {
@@ -315,12 +339,12 @@ function createResolver(root) {
 
     // A literal, or a name bound only to literals: n = "CDLL"; getattr(ctypes, n).
     function attributeNames(node) {
-        const literal = stringLiteral(node);
+        const literal = constantString(node);
         if (literal) return [literal];
         if (node.type !== "identifier") return null;
         const entries = lookup(node.text, node);
-        if (!entries || !entries.every(e => e.kind === "alias" && stringLiteral(e.value))) return null;
-        return entries.map(e => stringLiteral(e.value));
+        if (!entries || !entries.every(e => e.kind === "alias" && constantString(e.value) !== null)) return null;
+        return entries.map(e => constantString(e.value));
     }
 
     function callResult(q) {
@@ -367,7 +391,7 @@ function createResolver(root) {
                 for (const q of resolve(field(node, "function"), depth + 1)) {
                     // __import__("os") / importlib.import_module("os") is the module;
                     // getattr(os, "system") is os.system.
-                    const name = stringLiteral(positional[0] || keywords.get("name"));
+                    const name = constantString(positional[0] || keywords.get("name"));
                     if (IMPORT_CALLS.has(q) && name) {
                         out.add(canonical(q === "builtins.__import__" ? name.split(".")[0] : name));
                     } else if (q === "builtins.getattr" && positional[1]) {
@@ -413,7 +437,7 @@ function createResolver(root) {
         return out;
     }
 
-    return { resolve };
+    return { resolve, attributeNames };
 }
 
 function callArguments(call) {
@@ -461,7 +485,7 @@ function extractFrom(ast) {
 
     facts.ast = true;
     const root = ast.root;
-    const { resolve } = createResolver(root);
+    const { resolve, attributeNames: attributeNamesOf } = createResolver(root);
     const ops = facts.operations;
     const routes = new Set();
     const imports = new Set();
@@ -528,6 +552,21 @@ function extractFrom(ast) {
             const head = q.slice(0, dot);
             const tail = q.slice(dot + 1);
 
+            if (IMPORT_CALLS.has(q) && constantString(positional[0] || keywords.get("name")) === null &&
+                (positional[0] || keywords.get("name"))) {
+                // __import__(name) / importlib.import_module(name): the module is chosen at run time.
+                const evidence = `${q.replace(/^builtins\./, "")}(${codeText(positional[0] || keywords.get("name"))})`;
+                ops.dynamicImport = true;
+                calls.dynamic.add(evidence);
+                signal("dynamic_import", evidence, call);
+            } else if (q === "builtins.getattr" && positional[1] && attributeNamesOf(positional[1]) === null &&
+                (text(positional[0]) === "__builtins__" || [...resolve(positional[0])].some(base => SENSITIVE_MODULES.has(base)))) {
+                // getattr(os, name): which os function runs is chosen at run time.
+                const evidence = `getattr(${codeText(positional[0])}, ${codeText(positional[1])})`;
+                ops.dynamicReference = true;
+                calls.dynamic.add(evidence);
+                signal("dynamic_reference", evidence, call);
+            }
             if (PROCESS_CALLS.has(q)) {
                 ops.processSpawn = true;
                 calls.process.add(q);

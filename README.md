@@ -440,10 +440,34 @@ Joins an LLM decision with the IR it was made on:
 `world`. Names below use the `compress()` form.
 
 - `world.risk` (`ir.risk`) (from the AST): `critical` for dynamic code, process spawning,
-  `child_process` / `subprocess`, unsafe deserialization or native code; `high` for file deletion; `medium` for file writes, network,
-  crypto or secret comparison; otherwise `low`.
+  `child_process` / `subprocess`, unsafe deserialization or native code; `high` for file deletion
+  and, since 0.5.12, for modules or names chosen at run time (`dynamic_import`, `dynamic_reference`);
+  `medium` for file writes, network, crypto, secret comparison or `suspicious_text`; otherwise `low`.
+  Since 0.5.12 a supported file that did not parse (`analysisStatus: "incomplete"`) is at least `medium`.
 - `forbidden`: dangerous capabilities found in the file (`eval`,
-  `child_process`, `process_spawn`, `unsafe_deserialization`, `native_code`, …).
+  `child_process`, `process_spawn`, `unsafe_deserialization`, `native_code`,
+  `dynamic_import`, `dynamic_reference`, …).
+
+## Hidden and dynamic code (0.5.12)
+
+Static analysis cannot see what code builds at run time, so 0.5.12 names the
+places where it does instead of rating them `low`:
+
+| Fact | Risk | Examples |
+|---|---|---|
+| `dynamicEval` / `dynamic_code` | critical | `p.then(eval)`, `eval.call(null, s)`, `Function.apply(...)`, `require("vm")` / `import "node:vm"`, `[].constructor.constructor(s)` |
+| `dynamicImport` / `dynamic_import` | high | `require(name)`, `import(url)`, `` import(`./plugins/${n}.js`) ``, `import x from "https://…"`, `data:` / `blob:` modules; Python `__import__(name)`, `importlib.import_module(name)` |
+| `dynamicReference` / `dynamic_reference` | high | `global["pro" + "cess"]["ex" + "it"](1)`, `globalThis[String.fromCharCode(...)](...)`, `obj[atob("...")](s)`, `window[name](...)`; Python `getattr(os, name)`, `getattr(__builtins__, n)` |
+| `suspiciousText` / `suspicious_text` | medium | an import, export, env name or route that reads as an instruction to an AI agent (`SYSTEM_OVERRIDE_IGNORE_RISKS…`, `ignore previous instructions`, `rm -rf`, `curl … \| sh`) or hides text in whitespace, control or bidirectional characters (shown as `\u{202e}`) |
+
+Module names cut into pieces are put back together:
+`require("child_" + "process")` is `child_process`, `__import__("o" + "s").system(c)`
+is `os.system`. A local function named `require`, `getattr(self, name)` and
+`obj[key]()` on ordinary objects stay `low`. On 9 000 files of real code
+(npm packages, the Python standard library and dist-packages, crates) 0.5.12
+changed the risk of 1.3 % (121 files): mostly plugin loaders (`require(mod)`,
+`importlib.import_module(name)`) and files that did not parse. The names stay in
+the IR as data; `suspicious_text` only tells the agent not to follow them.
 - `mission.objective` (`ir.objective`): `security_refactor` | `filesystem_simplification` |
   `network_stability` | `stability_repair` | `general_optimization`.
 
@@ -452,7 +476,11 @@ Joins an LLM decision with the IR it was made on:
 - JavaScript, TypeScript, Python and Rust only; one file at a time — capabilities split across files are not
   combined.
 - Facts are syntactic. Aliases the AST cannot resolve (values passed through
-  other modules, computed property names) are not followed.
+  other modules, computed property names) are not followed; since 0.5.12 the
+  computed names that reach globals, `require` / `import` or sensitive Python
+  modules are reported as `dynamic_reference` / `dynamic_import` instead.
+  Code fetched or decoded at run time is never analyzed: the IR says that it
+  happens, not what it does.
 - Since 0.4.4, `fs` calls are recognised through any local name bound in the
   same file: `require("fs").writeFileSync(...)`, `const files = require("fs")`,
   `const { unlinkSync: del } = require("fs")`, `import { writeFile } from "fs/promises"`,

@@ -189,11 +189,67 @@ function languageTextRisk(language, lower) {
     return "low";
 }
 
-function inferRisk(filePath, content = "", facts = null, language = "javascript") {
+// A supported file the parser could not read to the end is never low: what it
+// hides behind the broken or too deeply nested part is unknown.
+function inferRisk(filePath, content = "", facts = null, language = "javascript", supported = true) {
     const fallback = textRisk(filePath, content, facts);
     if (facts?.ast) return fallback;
     const own = languageTextRisk(language, String(content || "").toLowerCase());
-    return RISK_ORDER.indexOf(own) > RISK_ORDER.indexOf(fallback) ? own : fallback;
+    const risk = RISK_ORDER.indexOf(own) > RISK_ORDER.indexOf(fallback) ? own : fallback;
+    return supported && risk === "low" ? "medium" : risk;
+}
+
+// Names the IR quotes from the source (imports, exports, env names, routes)
+// that read as instructions to an AI agent, or hide text in whitespace,
+// control or bidirectional characters. They stay in the IR as data and are
+// also named in riskSignals as suspicious_text.
+const INSTRUCTION_TEXT = new RegExp([
+    /\b(ignore|disregard|forget|override|bypass)\s+(all\s+|any\s+|the\s+|your\s+|previous\s+|prior\s+|above\s+|earlier\s+|these\s+|those\s+|safety\s+|security\s+)*(instructions?|risks|prompts?|guardrails|findings)\b/,
+    /\b(ignore|disregard|forget|override|bypass)\s+(all|any|the|your|previous|prior|above|earlier|these|those|safety|security)\s+(rules|warnings|polic(y|ies)|checks)\b/,
+    /\bsystem\s+override\b/,
+    /\byou\s+are\s+now\b/,
+    /\bnew\s+instructions\b/,
+    /\b(mark|treat|report|label|consider)\s+(this|it|the\s+\w+)(\s+\w+)?\s+(as\s+)?(safe|trusted|harmless|low\s+risk)\b/,
+    /\brm\s+-?rf\b/,
+    /\bcurl\b.*\|\s*(ba|z)?sh\b/
+].map(r => r.source).join("|"));
+const HIDDEN_CHARS = /[\s\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/;
+
+const HIDDEN_CHARS_ALL = new RegExp(HIDDEN_CHARS.source, "g");
+
+function suspiciousName(kind, value) {
+    const name = String(value);
+    // A route is "GET /path": only the path counts.
+    const checked = kind === "routes" ? name.slice(name.indexOf(" ") + 1) : name;
+    if (HIDDEN_CHARS.test(checked)) return true;
+    const words = checked.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_./:\\-]+/g, " ").toLowerCase();
+    return INSTRUCTION_TEXT.test(words) || INSTRUCTION_TEXT.test(checked.toLowerCase());
+}
+
+// The line of the name itself; a route is searched by its path.
+function lineOf(content, kind, value) {
+    const name = String(value);
+    const at = String(content || "").indexOf(kind === "routes" ? name.slice(name.indexOf(" ") + 1) : name);
+    return at < 0 ? 1 : String(content).slice(0, at).split("\n").length;
+}
+
+function markSuspiciousText(facts, content) {
+    if (!facts?.ast) return facts;
+    const found = [];
+    for (const kind of ["imports", "exports", "env", "routes"]) {
+        for (const value of facts[kind] || []) {
+            if (suspiciousName(kind, value)) {
+                const shown = String(value).replace(HIDDEN_CHARS_ALL, c => c === " " ? " " : `\\u{${c.codePointAt(0).toString(16)}}`);
+                found.push({ signal: "suspicious_text", evidence: `${kind}: ${shown}`, line: lineOf(content, kind, value) });
+            }
+        }
+    }
+    if (found.length === 0) return facts;
+    return {
+        ...facts,
+        operations: { ...facts.operations, suspiciousText: true },
+        riskSignals: [...(facts.riskSignals || []), ...found]
+    };
 }
 
 function textRisk(filePath, content = "", facts = null) {
@@ -381,14 +437,14 @@ function extractFacts(content, opts) {
 
 function analyze(content, options = {}) {
     const opts = readOptions(options);
-    const facts = boundFacts(extractFacts(content, opts));
+    const facts = boundFacts(markSuspiciousText(extractFacts(content, opts), content));
 
     return {
         target: opts.target,
         language: opts.language,
         objective: inferObjective(content, opts.consecutiveFailures, facts),
         constraints: inferConstraints(opts.target, opts.consecutiveFailures),
-        risk: inferRisk(opts.target, content, facts, opts.language),
+        risk: inferRisk(opts.target, content, facts, opts.language, opts.supported),
         pressure: opts.pressure,
         confidence: opts.confidence,
         budget: opts.budget,
