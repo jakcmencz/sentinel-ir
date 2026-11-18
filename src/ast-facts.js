@@ -2305,7 +2305,8 @@ function hiddenCallee(callee, depth = 0) {
         if (node.type === "subscript_expression") {
             const object = unwrapTypeOnly(field(node, "object"));
             const index = field(node, "index");
-            const literal = index ? stringLiteral(index) : null;
+            // `${name}` is not a literal; a plain `exit` is.
+            const literal = !index ? null : index.type === "template_string" ? constantString(index) : stringLiteral(index);
             if (index && literal === null && index.type !== "number" &&
                 (isObfuscatedName(index) || isGlobalHost(object))) return node;
             // global["process"]["exit"](1): the literal spelling of a reach into process or require.
