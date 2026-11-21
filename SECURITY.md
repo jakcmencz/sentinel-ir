@@ -25,6 +25,30 @@ privately if unsure.
 Only the newest release of the current minor line (the npm `latest` tag)
 gets fixes.
 
+## Known limits
+
+Sentinel-IR reads code and never runs it. That makes it safe to point at
+untrusted code, and it also sets limits no release can remove. They are normal
+behavior, not vulnerabilities:
+
+- **Code that exists only at run time is not visible.** Code that is
+  downloaded, decoded or assembled while the program runs is not in the file.
+  Sentinel-IR reports the mechanism (`dynamic_code`, `dynamic_import`,
+  `dynamic_reference`) and raises the risk, but cannot say what that code does.
+- **`low` is not proof of safety.** It means no known risky pattern was found
+  in this file. New evasion patterns are reported as normal bugs.
+- **One file at a time.** Capabilities split across files are not combined.
+- **The IR contains text chosen by the file's author.** Names of exports,
+  imports, env variables and paths are copied as data. Names that look like
+  instructions to an agent are flagged `suspicious_text`, but an agent must
+  treat the whole IR as untrusted data, never as instructions.
+- **`incomplete` means facts may be missing.** A file that does not fully
+  parse (syntax error, nesting too deep, parse budget) is at least `medium`;
+  its facts cover only what was parsed.
+
+More detail is in the README section
+[Limitations](https://gitlab.com/jakubrojicek11/sentinel-ir#limitations).
+
 ## Release integrity
 
 Releases are published only from GitLab CI on a protected `v*` tag, through
