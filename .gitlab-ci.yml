@@ -74,3 +74,13 @@ publish:
     - V="$(node -p 'require("./package.json").version')"
     - if [ -z "$(npm view "sentinel-ir@$V" version 2>/dev/null)" ]; then npm publish --provenance --access public; fi
     - ATTEST_TIMEOUT_MS=1500000 node scripts/verify-attestations.js
+
+diag_tmp:
+  stage: test
+  image: node:24
+  script:
+    - curl -s -D - -o a.json https://registry.npmjs.org/-/npm/v1/attestations/sentinel-ir@0.5.13 | grep -iE '^(HTTP|age|cf-|date)'
+    - node -p 'require("./a.json").attestations.map(a=>a.predicateType)'
+    - mkdir t && cd t && echo '{}' > package.json && npm i --no-audit --no-fund sentinel-ir@0.5.13 >/dev/null && rm -rf node_modules/web-tree-sitter package-lock.json
+    - npx -y npm@10 audit signatures || true
+    - npx -y npm@11 audit signatures || true
