@@ -50,3 +50,11 @@ test("the packed tarball loads and analyzes every language", { timeout: 120000 }
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });
+
+// npm shows a relative README link as https://www.npmjs.com/package/<file>, a 404.
+test("README links work on npm: no relative links", () => {
+  const readme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8").replace(/`[^`\n]*`/g, "");
+  const relative = [...readme.matchAll(/\]\(([^)\s]+)\)/g)].map((m) => m[1])
+    .filter((u) => !/^(https?:|mailto:|#)/.test(u));
+  assert.deepEqual(relative, []);
+});

@@ -561,7 +561,7 @@ then brings it back.
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Apache License 2.0 — see [LICENSE](https://gitlab.com/jakubrojicek11/sentinel-ir/-/blob/main/LICENSE) and [NOTICE](https://gitlab.com/jakubrojicek11/sentinel-ir/-/blob/main/NOTICE).
 
 ## Analysis status
 
