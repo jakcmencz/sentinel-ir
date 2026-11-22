@@ -70,5 +70,7 @@ publish:
     - npm ci
     - npm test
     - test "v$(node -p 'require("./package.json").version')" = "$CI_COMMIT_TAG"
-    - npm publish --provenance --access public
-    - node scripts/verify-attestations.js
+    # A retried job skips the publish and only checks the attestations again.
+    - V="$(node -p 'require("./package.json").version')"
+    - if [ -z "$(npm view "sentinel-ir@$V" version 2>/dev/null)" ]; then npm publish --provenance --access public; fi
+    - ATTEST_TIMEOUT_MS=1500000 node scripts/verify-attestations.js
