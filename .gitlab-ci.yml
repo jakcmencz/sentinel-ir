@@ -75,5 +75,5 @@ publish:
     # added the publish attestation yet (up to ~10 min), and npm 10 then fails
     # `npm audit signatures` for everyone behind that edge. Ask only after 15 min.
     - V="$(node -p 'require("./package.json").version')"
-    - if [ -z "$(npm view "sentinel-ir@$V" version 2>/dev/null)" ]; then npm publish --provenance --access public && sleep 900; fi
+    - if [ -z "$(npm view "sentinel-ir@$V" version 2>/dev/null)" ]; then npm publish --provenance --access public; sleep 900; fi
     - ATTEST_TIMEOUT_MS=1500000 node scripts/verify-attestations.js
