@@ -54,5 +54,22 @@ More detail is in the README section
 Releases are published only from GitLab CI on a protected `v*` tag, through
 npm trusted publishing (GitLab OIDC) with
 [provenance](https://docs.npmjs.com/generating-provenance-statements); no npm
-token is stored. Check a release with `npm audit signatures`. GitHub is a
-read-only mirror.
+token is stored. GitHub is a read-only mirror.
+
+15 minutes after each publish, the `verify_release` job of the tag pipeline
+installs the new version in an empty folder and requires `npm audit
+signatures` to pass on npm 10 and on npm 11. The result for every release is
+on the [tag pipelines](https://gitlab.com/jakubrojicek11/sentinel-ir/-/pipelines?scope=tags).
+
+Check a version yourself (npm 9.5 or newer):
+
+```sh
+mkdir check && cd check && npm init -y
+npm install sentinel-ir@<version>
+npm audit signatures
+```
+
+Every installed package should have a verified registry signature and
+`sentinel-ir` a verified attestation, with nothing reported missing or invalid. Use 0.5.14 or newer:
+on some npm CDN locations an older version lacks npm's publish attestation, so
+npm 10 reports it as missing a signature (npm 11 passes).
