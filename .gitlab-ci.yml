@@ -1,6 +1,7 @@
 stages:
   - test
   - publish
+  - verify
 
 # Test on every supported Node line.
 unit_tests:
@@ -70,10 +71,22 @@ publish:
     - npm ci
     - npm test
     - test "v$(node -p 'require("./package.json").version')" = "$CI_COMMIT_TAG"
-    # A retried job skips the publish and only checks the attestations again.
-    # npm's CDN caches the attestations URL for a year, also while npm has not
-    # added the publish attestation yet (up to ~10 min), and npm 10 then fails
-    # `npm audit signatures` for everyone behind that edge. Ask only after 15 min.
+    # A retried job skips the publish.
     - V="$(node -p 'require("./package.json").version')"
-    - if [ -z "$(npm view "sentinel-ir@$V" version 2>/dev/null)" ]; then npm publish --provenance --access public; sleep 900; fi
-    - ATTEST_TIMEOUT_MS=1500000 node scripts/verify-attestations.js
+    - if [ -z "$(npm view "sentinel-ir@$V" version 2>/dev/null)" ]; then npm publish --provenance --access public; fi
+
+# npm adds the publish attestation up to ~10 min after the publish, and its CDN
+# caches the first answer of the attestations URL for a year: an early question
+# leaves npm 10 failing `npm audit signatures` for everyone behind that edge.
+# So check 15 min later; a delayed job uses no CI minutes while it waits.
+# Retry this job alone to check again.
+verify_release:
+  stage: verify
+  image: node:24
+  needs: [publish]
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+[.][0-9]+[.][0-9]+$/'
+      when: delayed
+      start_in: 15 minutes
+  script:
+    - ATTEST_TIMEOUT_MS=600000 node scripts/verify-attestations.js
