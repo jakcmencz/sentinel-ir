@@ -187,8 +187,9 @@ const LANGUAGE_TEXT = {
 // Bounded and limited to one command (no ; & | or newline in between), so a
 // long untrusted line is not rescanned without end and `curl x || sh` or a
 // token used by another command on the line does not count.
-// A single & (a quoted URL query) stays inside the command; && ends it.
-const CMD = String.raw`(?:[^\n;&|]|&(?!&)){0,500}`;
+// An & inside a word (a URL query, a=1&b=2) stays inside the command; && and a
+// background & (followed by a space) end it.
+const CMD = String.raw`(?:[^\n;&|]|&(?=[^\s&])){0,500}`;
 const PIPE = String.raw`(?<!\|)\|(?!\|)\s*`;
 const SHELL = String.raw`(sudo\s+(-\S+\s+){0,5})?((/usr)?(/local)?/bin/)?(ba|z|da|k|fi)?sh\b`;
 const UNSUPPORTED_TEXT = {

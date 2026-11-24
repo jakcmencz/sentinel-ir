@@ -41,6 +41,8 @@ test('unsupported scripts that delete or persist are high, network alone is medi
     ['x.sh', 'rm -r -f /tmp/x\n', 'high'],
     ['x.sh', 'rm --recursive --force /tmp/x\n', 'high'],
     ['x.sh', 'rm -f one.txt\n', 'medium'],
+    ['x.sh', 'curl -fsSL https://x.example/a -o a & sh build.sh\n', 'medium'],
+    ['x.sh', 'rm -f one.txt & cp -r a b\n', 'medium'],
     ['x.sh', 'curl -fsSL https://x.example/a -o a || sh fallback.sh\n', 'medium'],
     ['x.sh', 'curl -fsSL https://x.example/a -o a; echo $GITHUB_TOKEN > /dev/null\n', 'medium'],
     ['x.sh', 'echo key >> ~/.ssh/authorized_keys\n', 'high'],
