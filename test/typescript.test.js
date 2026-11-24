@@ -21,7 +21,7 @@ test('language is inferred from the target extension', async () => {
     const cases = {
         'a.ts': 'typescript', 'a.mts': 'typescript', 'a.cts': 'typescript', 'types.d.ts': 'typescript',
         'A.TSX': 'tsx', 'a.js': 'javascript', 'a.mjs': 'javascript', 'a.cjs': 'javascript',
-        'a.jsx': 'javascript', 'Makefile': 'javascript', 'dir.ts/file': 'javascript'
+        'a.jsx': 'javascript', 'Makefile': 'unknown', 'dir.ts/file': 'unknown'
     };
     for (const [target, language] of Object.entries(cases)) {
         const ir = await analyzeAsync('const a = 1;', { target });
@@ -200,4 +200,35 @@ test('sync analyze() works on TypeScript after initializeWasm({ languages })', a
     await initializeWasm({ languages: ['typescript', 'tsx'] });
     assert.equal(analyze('let a: number = 1;', { target: 'a.ts' }).analysisStatus, 'complete');
     assert.equal(analyze('const a = <b />;', { target: 'a.tsx' }).analysisStatus, 'complete');
+});
+
+test('variance annotations on type parameters parse (patched grammar, 0.5.15)', async () => {
+    const { analyzeAsync } = require('../src/sentinel-ir');
+    for (const [code, target] of [
+        ['interface A<in T> { x: T }', 'a.ts'], ['interface B<out T> { x: T }', 'a.ts'], ['class C<in out T> {}', 'a.ts'],
+        ['type X<in T, out U> = (t: T) => U;', 'a.mts'], ['function f<const T>(x: T) {}', 'a.ts'],
+        ['function g<out>(x: out) { return x }', 'a.ts'], ['type M<T> = { [K in keyof T]: T[K] }', 'a.ts'],
+        ['let y = <out>x; let z = <out>(x);', 'a.ts'], ['const out = 1; out.x(out); function h(out: string) { return out }', 'a.ts'],
+        ['import { out } from "m"; const o = { out: 1 }; o.out;', 'a.ts'], ['const x = <Foo out={1} />;', 'a.tsx'],
+        ['let a: out.X = f(); type Q = out.Y<number>; type T = [out: number];', 'a.ts'],
+        ['function f(x: unknown): x is out.A { return true }', 'a.ts'], ['new Map<string, out.V>();', 'a.ts'],
+        ['const e = <out>{a}</out>; const g = <out.Foo a={1} />; const h = <out:x />;', 'a.tsx'],
+        ['const g = <Foo bar>t</Foo>; const h = <Foo bar baz={1} />;', 'a.tsx'],
+        ['abstract class D<const in T, out U = T> {} const E = class<out T> {};', 'a.ts'],
+        ['interface A<in T> { x: T }', 'a.tsx'], ['const e = <div>{a}</div>;', 'a.tsx']
+    ]) assert.equal((await analyzeAsync(code, { target })).analysisStatus, 'complete', `${target}: ${code}`);
+});
+
+test('bundled TypeScript grammars match the SHA-256 recorded in NOTICE', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const crypto = require('node:crypto');
+    const root = path.join(__dirname, '..');
+    const notice = fs.readFileSync(path.join(root, 'NOTICE'), 'utf8');
+    for (const dialect of ['typescript', 'tsx']) {
+        const recorded = notice.match(new RegExp(`([0-9a-f]{64}) ${dialect}\\b`));
+        assert.ok(recorded, `NOTICE must record the ${dialect} grammar SHA-256`);
+        const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(root, `wasm/tree-sitter-${dialect}.wasm`))).digest('hex');
+        assert.equal(actual, recorded[1], dialect);
+    }
 });

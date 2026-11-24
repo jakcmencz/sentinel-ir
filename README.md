@@ -18,17 +18,18 @@ an LLM instead of the raw file.
 
 | `language` | grammar | picked for `target` ending in |
 |---|---|---|
-| `javascript` (alias `js`, default) | `tree-sitter-javascript` | `.js` `.mjs` `.cjs` `.jsx`, or no extension |
-| `typescript` (alias `ts`) | `tree-sitter-typescript` 0.23.2 | `.ts` `.mts` `.cts` (incl. `.d.ts`) |
-| `tsx` | `tree-sitter-tsx` 0.23.2 | `.tsx` |
+| `javascript` (alias `js`, default) | `tree-sitter-javascript` | `.js` `.mjs` `.cjs` `.jsx`, or no `target` at all |
+| `typescript` (alias `ts`) | `tree-sitter-typescript` 0.23.2, patched (see [TypeScript](#typescript)) | `.ts` `.mts` `.cts` (incl. `.d.ts`) |
+| `tsx` | `tree-sitter-tsx` 0.23.2, patched | `.tsx` |
 | `python` (alias `py`) | `tree-sitter-python` 0.25.0 | `.py` `.pyi` |
 | `rust` (alias `rs`) | `tree-sitter-rust` 0.24.2, patched (see [Rust](#rust)) | `.rs` |
 
 Names and aliases are case-insensitive (`"JS"` works).
 
 Other languages are not supported. An explicit unsupported `language`
-(e.g. `"ruby"`) or, since 0.5.8, a `target` with any other extension (e.g.
-`x.rb`, `main.go`) is reported as `analysisStatus: "incomplete"` with
+(e.g. `"ruby"`), since 0.5.8 a `target` with any other extension (e.g.
+`x.rb`, `main.go`) and, since 0.5.15, a `target` with no extension (e.g.
+`Makefile`, `configure`; before 0.5.15 it was parsed as JavaScript) is reported as `analysisStatus: "incomplete"` with
 `language: "unknown"` and `facts.error: "unsupported file type: .rb (…)"` (or
 `"unsupported language: ruby (…)"`; `compress()` shows it as `facts.reason`; before 0.5.10 an explicit
 `"ruby"` was reported as `language: "ruby"`)
@@ -175,6 +176,17 @@ JavaScript. TypeScript-specific handling:
   never run. Exported types, interfaces and enums are listed in `exports`.
 - `.ts` and `.tsx` are different grammars: JSX in a `.ts` file, or `<T>x` in a
   `.tsx` file, is a parse error and gives `analysisStatus: "incomplete"`.
+
+Since 0.5.15 variance annotations on type parameters (`interface A<in T>`,
+`<out T>`, `<in out T>`, TypeScript 4.7) parse; tree-sitter-typescript 0.23.2
+rejects them, so the bundled grammars are patched
+(`scripts/typescript-grammar/patch-grammar.py`, rebuilt by
+`scripts/typescript-grammar/build.sh`). On 3 342 `.ts`/`.tsx` files (zod,
+type-fest, trpc, vuejs/core, vscode-languageserver-node) this fixed 4
+incomplete zod files and changed no other result. Modifiers are read only on
+classes, interfaces and type aliases (where TypeScript allows them), and `out`
+stays an ordinary name everywhere (`const out`, `<out>x`, `app.get<out.Params>`,
+`<out.Foo />`).
 
 Not covered: framework decorators (`@Get("/x")`) are not read as routes, and
 path aliases from `tsconfig.json` are not resolved.
@@ -443,7 +455,8 @@ Joins an LLM decision with the IR it was made on:
   `child_process` / `subprocess`, unsafe deserialization or native code; `high` for file deletion
   and, since 0.5.12, for modules or names chosen at run time (`dynamic_import`, `dynamic_reference`);
   `medium` for file writes, network, crypto, secret comparison or `suspicious_text`; otherwise `low`.
-  Since 0.5.12 a supported file that did not parse (`analysisStatus: "incomplete"`) is at least `medium`.
+  Since 0.5.12 a supported file that did not parse (`analysisStatus: "incomplete"`) is at least `medium`;
+  since 0.5.15 so is code in an unsupported language or with an unsupported `target` (before: `low`).
 - `forbidden`: dangerous capabilities found in the file (`eval`,
   `child_process`, `process_spawn`, `unsafe_deserialization`, `native_code`,
   `dynamic_import`, `dynamic_reference`, …).
@@ -585,7 +598,7 @@ position) or, since 0.4.5 for Python and 0.5.8 for every language, `unclosed`
 bracket). It never
 contains source text. It does not say whether the code
 is wrong or uses syntax the grammar does not support, for example TypeScript
-`export type *` or variance annotations such as `in T`.
+`export type *` (variance annotations such as `in T` parse since 0.5.15).
 
 Since 0.4.5, Python errors point where CPython reports them in most cases:
 the bracket that is never closed, the end of an `if`/`def`/`class`/… header
