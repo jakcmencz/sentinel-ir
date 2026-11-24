@@ -26,8 +26,8 @@ test('an unsupported extension is echoed only when it is a plain extension', asy
   assert.match(ir.facts.error, /^unsupported file type: \(unnamed\)/);
 });
 
-test('no extension and known extensions still pick a grammar', async () => {
-  assert.equal((await SentinelIR.analyzeAsync('eval(1)', { target: 'Makefile' })).language, 'javascript');
+test('no target picks JavaScript; known extensions pick a grammar', async () => {
+  assert.equal((await SentinelIR.analyzeAsync('eval(1)')).language, 'javascript');
   assert.equal((await SentinelIR.analyzeAsync('eval(1)')).analysisStatus, 'complete');
   assert.equal((await SentinelIR.analyzeAsync('export declare const x: number;', { target: 'a.d.ts' })).language, 'typescript');
   assert.equal((await SentinelIR.analyzeAsync('x = 1', { target: 'x.rb', language: 'python' })).analysisStatus, 'complete');
@@ -77,4 +77,19 @@ test('TypeScript declarations ship with the package', () => {
   for (const name of Object.keys(SentinelIR)) {
     assert.match(dts, new RegExp(`export (function|const) ${name}\\b`), name);
   }
+});
+
+test('a target with no extension is unsupported, not JavaScript (0.5.15)', async () => {
+  for (const target of ['Makefile', 'configure', 'bin/install']) {
+    const ir = await SentinelIR.analyzeAsync('eval(1)', { target });
+    assert.equal(ir.analysisStatus, 'incomplete', target);
+    assert.equal(ir.language, 'unknown', target);
+    assert.notEqual(ir.risk, 'low', target);
+    assert.match(ir.facts.error, /^unsupported file type: \(none\)/);
+  }
+});
+
+test('empty code has 0 lines', async () => {
+  assert.equal((await SentinelIR.analyzeAsync('')).summary.lines, 0);
+  assert.equal((await SentinelIR.analyzeAsync('x\n')).summary.lines, 2);
 });

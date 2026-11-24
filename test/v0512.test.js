@@ -101,9 +101,11 @@ test("a supported file that did not parse is at least medium", async () => {
         assert.equal(ir.analysisStatus, "incomplete", target);
         assert.equal(ir.risk, "medium", target);
     }
-    const unknown = await analyze("hello", "README.md");
-    assert.equal(unknown.analysisStatus, "incomplete");
-    assert.equal(unknown.risk, "low");
+    for (const target of ["README.md", "install.sh", "Makefile"]) {
+        const unknown = await analyze("hello", target);
+        assert.equal(unknown.analysisStatus, "incomplete", target);
+        assert.equal(unknown.risk, "medium", target);
+    }
 });
 
 test("names that read as instructions to an agent are suspicious_text", async () => {

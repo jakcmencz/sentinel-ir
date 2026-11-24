@@ -47,8 +47,9 @@ const LANGUAGE_ALIASES = Object.freeze({
 });
 
 // File extensions that select a grammar when no `language` option is given.
-// A target without an extension is analyzed as JavaScript; any other extension
-// is reported as unsupported instead of being parsed with the wrong grammar.
+// Without a target the code is analyzed as JavaScript; a target with no or any
+// other extension (Makefile, configure, x.rb) is reported as unsupported
+// instead of being parsed with the wrong grammar.
 const EXTENSION_LANGUAGES = Object.freeze({
     ".js": "javascript",
     ".mjs": "javascript",
@@ -78,8 +79,9 @@ function resolveLanguage(language, target) {
             : { language: "unknown", supported: false, requested: SAFE_LANGUAGE.test(id) ? id : "(unnamed)" };
     }
 
-    const match = /\.[^./\\]+$/.exec(String(target || "").toLowerCase());
-    if (!match) return { language: "javascript", supported: true };
+    if (typeof target !== "string" || target === "") return { language: "javascript", supported: true };
+    const match = /\.[^./\\]+$/.exec(target.toLowerCase());
+    if (!match) return { language: "unknown", supported: false, extension: "(none)" };
     const inferred = EXTENSION_LANGUAGES[match[0]];
     return inferred
         ? { language: inferred, supported: true }
@@ -189,14 +191,14 @@ function languageTextRisk(language, lower) {
     return "low";
 }
 
-// A supported file the parser could not read to the end is never low: what it
-// hides behind the broken or too deeply nested part is unknown.
+// Code the parser could not read to the end, or could not read at all
+// (unsupported language), is never low: what it hides is unknown.
 function inferRisk(filePath, content = "", facts = null, language = "javascript", supported = true) {
     const fallback = textRisk(filePath, content, facts);
     if (facts?.ast) return fallback;
     const own = languageTextRisk(language, String(content || "").toLowerCase());
     const risk = RISK_ORDER.indexOf(own) > RISK_ORDER.indexOf(fallback) ? own : fallback;
-    return supported && risk === "low" ? "medium" : risk;
+    return risk === "low" ? "medium" : risk;
 }
 
 // Names the IR quotes from the source (imports, exports, env names, routes)
@@ -352,7 +354,7 @@ function inferForbidden(content = "", facts = null, language = "javascript") {
 
 function summarize(content = "", facts = null, language = "javascript") {
     const text = String(content || "");
-    const lines = text.split("\n").length;
+    const lines = text === "" ? 0 : text.split("\n").length;
     const size = text.length;
 
     if (facts?.ast) {

@@ -21,7 +21,7 @@ test('language is inferred from the target extension', async () => {
     const cases = {
         'a.ts': 'typescript', 'a.mts': 'typescript', 'a.cts': 'typescript', 'types.d.ts': 'typescript',
         'A.TSX': 'tsx', 'a.js': 'javascript', 'a.mjs': 'javascript', 'a.cjs': 'javascript',
-        'a.jsx': 'javascript', 'Makefile': 'javascript', 'dir.ts/file': 'javascript'
+        'a.jsx': 'javascript', 'Makefile': 'unknown', 'dir.ts/file': 'unknown'
     };
     for (const [target, language] of Object.entries(cases)) {
         const ir = await analyzeAsync('const a = 1;', { target });
@@ -200,4 +200,28 @@ test('sync analyze() works on TypeScript after initializeWasm({ languages })', a
     await initializeWasm({ languages: ['typescript', 'tsx'] });
     assert.equal(analyze('let a: number = 1;', { target: 'a.ts' }).analysisStatus, 'complete');
     assert.equal(analyze('const a = <b />;', { target: 'a.tsx' }).analysisStatus, 'complete');
+});
+
+test('variance annotations on type parameters parse (patched grammar, 0.5.15)', async () => {
+    const { analyzeAsync } = require('../src/sentinel-ir');
+    for (const [code, target] of [
+        ['interface A<in T> { x: T }', 'a.ts'], ['interface B<out T> { x: T }', 'a.ts'], ['class C<in out T> {}', 'a.ts'],
+        ['type X<in T, out U> = (t: T) => U;', 'a.mts'], ['function f<const T>(x: T) {}', 'a.ts'],
+        ['function g<out>(x: out) { return x }', 'a.ts'], ['type M<T> = { [K in keyof T]: T[K] }', 'a.ts'],
+        ['interface A<in T> { x: T }', 'a.tsx'], ['const e = <div>{a}</div>;', 'a.tsx']
+    ]) assert.equal((await analyzeAsync(code, { target })).analysisStatus, 'complete', `${target}: ${code}`);
+});
+
+test('bundled TypeScript grammars match the SHA-256 recorded in NOTICE', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const crypto = require('node:crypto');
+    const root = path.join(__dirname, '..');
+    const notice = fs.readFileSync(path.join(root, 'NOTICE'), 'utf8');
+    for (const dialect of ['typescript', 'tsx']) {
+        const recorded = notice.match(new RegExp(`([0-9a-f]{64}) ${dialect}\\b`));
+        assert.ok(recorded, `NOTICE must record the ${dialect} grammar SHA-256`);
+        const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(root, `wasm/tree-sitter-${dialect}.wasm`))).digest('hex');
+        assert.equal(actual, recorded[1], dialect);
+    }
 });

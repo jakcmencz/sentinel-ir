@@ -6,11 +6,15 @@ This product includes software developed as part of the Sentinel
 
 Third-party components:
 
-wasm/tree-sitter-typescript.wasm and wasm/tree-sitter-tsx.wasm are copied
-unmodified from the npm package tree-sitter-typescript@0.23.2
-(https://github.com/tree-sitter/tree-sitter-typescript),
+wasm/tree-sitter-typescript.wasm and wasm/tree-sitter-tsx.wasm are built from
+a modified copy of the v0.23.2 release of tree-sitter-typescript
+(https://github.com/tree-sitter/tree-sitter-typescript/releases/tag/v0.23.2),
 Copyright (c) 2017 Max Brunsfeld, MIT License; see
-wasm/LICENSE-tree-sitter-typescript.
+wasm/LICENSE-tree-sitter-typescript. The modification (variance annotations
+on type parameters) is in scripts/typescript-grammar/patch-grammar.py and
+scripts/typescript-grammar/build.sh rebuilds the files reproducibly (SHA-256
+10014d0a6198c30bb982bab9f299706a4416f912c888e6d0787d193b43cd8c49 typescript,
+4cb97ec12860fa5bdd5326f9c9ecc57dab0a362f38253e4598fc44b744510a1a tsx).
 
 wasm/tree-sitter-python.wasm is copied unmodified from the npm package
 tree-sitter-python@0.25.0 (https://github.com/tree-sitter/tree-sitter-python),
