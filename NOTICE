@@ -13,8 +13,8 @@ Copyright (c) 2017 Max Brunsfeld, MIT License; see
 wasm/LICENSE-tree-sitter-typescript. The modification (variance annotations
 on type parameters) is in scripts/typescript-grammar/patch-grammar.py and
 scripts/typescript-grammar/build.sh rebuilds the files reproducibly (SHA-256
-10014d0a6198c30bb982bab9f299706a4416f912c888e6d0787d193b43cd8c49 typescript,
-4cb97ec12860fa5bdd5326f9c9ecc57dab0a362f38253e4598fc44b744510a1a tsx).
+3235dc8c232e1e1655bae8373f57f0b889f0ef8766a2d405ac8f4ae6be0ce3b4 typescript,
+0d8307cf28ebe4bc0b492e44e3c832638908830f2b34acbb8b3685d6dd07da43 tsx).
 
 wasm/tree-sitter-python.wasm is copied unmodified from the npm package
 tree-sitter-python@0.25.0 (https://github.com/tree-sitter/tree-sitter-python),

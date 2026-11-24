@@ -208,6 +208,8 @@ test('variance annotations on type parameters parse (patched grammar, 0.5.15)', 
         ['interface A<in T> { x: T }', 'a.ts'], ['interface B<out T> { x: T }', 'a.ts'], ['class C<in out T> {}', 'a.ts'],
         ['type X<in T, out U> = (t: T) => U;', 'a.mts'], ['function f<const T>(x: T) {}', 'a.ts'],
         ['function g<out>(x: out) { return x }', 'a.ts'], ['type M<T> = { [K in keyof T]: T[K] }', 'a.ts'],
+        ['let y = <out>x; let z = <out>(x);', 'a.ts'], ['const out = 1; out.x(out); function h(out: string) { return out }', 'a.ts'],
+        ['import { out } from "m"; const o = { out: 1 }; o.out;', 'a.ts'], ['const x = <Foo out={1} />;', 'a.tsx'],
         ['interface A<in T> { x: T }', 'a.tsx'], ['const e = <div>{a}</div>;', 'a.tsx']
     ]) assert.equal((await analyzeAsync(code, { target })).analysisStatus, 'complete', `${target}: ${code}`);
 });
