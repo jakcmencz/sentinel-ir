@@ -183,10 +183,10 @@ rejects them, so the bundled grammars are patched
 (`scripts/typescript-grammar/patch-grammar.py`, rebuilt by
 `scripts/typescript-grammar/build.sh`). On 3 342 `.ts`/`.tsx` files (zod,
 type-fest, trpc, vuejs/core, vscode-languageserver-node) this fixed 4
-incomplete zod files and changed no other result. `out` is then a keyword;
-it stays usable as a name (`const out`, `<out>x`, `function f<out>(x: out)`)
-except as a lowercase TSX tag (`<out>…</out>`, not an HTML element), which is
-`incomplete`.
+incomplete zod files and changed no other result. Modifiers are read only on
+classes, interfaces and type aliases (where TypeScript allows them), and `out`
+stays an ordinary name everywhere (`const out`, `<out>x`, `app.get<out.Params>`,
+`<out.Foo />`).
 
 Not covered: framework decorators (`@Get("/x")`) are not read as routes, and
 path aliases from `tsconfig.json` are not resolved.
