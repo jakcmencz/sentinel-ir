@@ -187,7 +187,8 @@ const LANGUAGE_TEXT = {
 // Bounded and limited to one command (no ; & | or newline in between), so a
 // long untrusted line is not rescanned without end and `curl x || sh` or a
 // token used by another command on the line does not count.
-const CMD = String.raw`[^\n;&|]{0,500}`;
+// A single & (a quoted URL query) stays inside the command; && ends it.
+const CMD = String.raw`(?:[^\n;&|]|&(?!&)){0,500}`;
 const PIPE = String.raw`(?<!\|)\|(?!\|)\s*`;
 const SHELL = String.raw`(sudo\s+(-\S+\s+){0,5})?((/usr)?(/local)?/bin/)?(ba|z|da|k|fi)?sh\b`;
 const UNSUPPORTED_TEXT = {
@@ -415,14 +416,14 @@ function summarize(content = "", facts = null, language = "javascript") {
         lines,
         hasCrypto: text.toLowerCase().includes("crypto")
             || Boolean(LANGUAGE_TEXT[language]?.crypto.test(text.toLowerCase()))
-            || (language === "unknown" && UNSUPPORTED_TEXT.crypto.test(text.toLowerCase())),
+            || (language === "unknown" && UNSUPPORTED_TEXT.crypto.test(joinLines(text.toLowerCase()))),
         hasFilesystem: text.toLowerCase().includes("fs.")
             || Boolean(LANGUAGE_TEXT[language]?.high.test(text.toLowerCase()))
-            || (language === "unknown" && (UNSUPPORTED_TEXT.destructiveFs.test(text.toLowerCase())
-                || UNSUPPORTED_TEXT.persistence.test(text.toLowerCase()))),
+            || (language === "unknown" && (UNSUPPORTED_TEXT.destructiveFs.test(joinLines(text.toLowerCase()))
+                || UNSUPPORTED_TEXT.persistence.test(joinLines(text.toLowerCase())))),
         hasNetwork: NET_TEXT.test(text.toLowerCase())
             || Boolean(LANGUAGE_TEXT[language]?.network.test(text.toLowerCase()))
-            || (language === "unknown" && UNSUPPORTED_TEXT.network.test(text.toLowerCase()))
+            || (language === "unknown" && UNSUPPORTED_TEXT.network.test(joinLines(text.toLowerCase())))
     };
 }
 
