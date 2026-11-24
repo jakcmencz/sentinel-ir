@@ -184,23 +184,32 @@ const LANGUAGE_TEXT = {
 // PowerShell, ...): install scripts are often extensionless, so a script that
 // pipes a download into a shell, opens a reverse shell or sends the
 // environment out must not stay at the generic "medium".
-const SHELL = String.raw`(sudo\s+)?(ba|z|da|k|fi)?sh\b`;
+// Bounded and limited to one command (no ; & | or newline in between), so a
+// long untrusted line is not rescanned without end and `curl x || sh` or a
+// token used by another command on the line does not count.
+const CMD = String.raw`[^\n;&|]{0,500}`;
+const PIPE = String.raw`(?<!\|)\|(?!\|)\s*`;
+const SHELL = String.raw`(sudo\s+(-\S+\s+){0,5})?((/usr)?(/local)?/bin/)?(ba|z|da|k|fi)?sh\b`;
 const UNSUPPORTED_TEXT = {
-    pipeToShell: new RegExp(String.raw`\b(curl|wget)\b[^\n]*\|\s*${SHELL}|\bbase64\s+(-d|--decode)\b[^\n]*\|\s*${SHELL}|\b(iex|invoke-expression)\b|\bdownloadstring\s*\(|\bpowershell\b[^\n]*\s-(e|enc|encodedcommand)\s`),
-    reverseShell: /\/dev\/(tcp|udp)\/|\b(nc|ncat|netcat)\b[^\n|]*\s-[a-z]*[ec]\b/,
-    envExfiltration: /\b(env|printenv)\s*\|\s*(curl|wget|nc|ncat|netcat)\b|\b(curl|wget)\b[^\n]*\$\{?\w*(token|secret|passw(or)?d|api_?key|credentials)\w*/,
+    pipeToShell: new RegExp(String.raw`\b(curl|wget)\b${CMD}${PIPE}${SHELL}|\bbase64\s+(-d|--decode)\b${CMD}${PIPE}${SHELL}|\b(iex|invoke-expression)\b|\bdownloadstring\s*\(|\bpowershell\b${CMD}\s-(e|enc|encodedcommand)\s`),
+    reverseShell: new RegExp(String.raw`/dev/(tcp|udp)/|\b(nc|ncat|netcat)\b${CMD}\s-[a-z]*[ec]\b`),
+    envExfiltration: new RegExp(String.raw`\b(env|printenv)\s*${PIPE}(curl|wget|nc|ncat|netcat)\b|\b(curl|wget)\b${CMD}\$\{?\w{0,40}(token|secret|passw(or)?d|api_?key|credentials)`),
     processSpawn: /\b(system|exec|spawn|popen|shell_exec|passthru|proc_open)\s*\(|%x[({[]/,
-    destructiveFs: /\brm\s+(-[a-z]*r[a-z]*f[a-z]*|-[a-z]*f[a-z]*r[a-z]*|-[a-z]*r[a-z]*\s+-[a-z]*f[a-z]*|-[a-z]*f[a-z]*\s+-[a-z]*r[a-z]*)\b|\bmkfs\b|\bdd\s+if=/,
+    destructiveFs: new RegExp(String.raw`\brm\s+(${CMD}\s)?(-[a-z]*r[a-z]*|--recursive)\b|\bmkfs\b|\bdd\s+if=`),
     persistence: /\bchmod\s+(-r\s+)?(\+x|[0-7]*[1357][0-7]{0,2})\b|\bcrontab\b|authorized_keys|~\/\.(ssh|bashrc|profile|zshrc)\b|>\s*\/etc\//,
     network: /\b(curl|wget|nc|ncat|netcat|socat|scp|rsync|ssh|ftp|tftp|invoke-webrequest|iwr|invoke-restmethod|irm|net\.webclient|downloadstring|downloadfile)\b/,
     crypto: /\b(openssl|gpg|ssh-keygen)\b/
 };
+
+// A command continued on the next line (`curl … \` newline `| sh`) is one line.
+const joinLines = (lower) => lower.replace(/\\\r?\n/g, " ");
 
 const RISK_ORDER = ["low", "medium", "high", "critical"];
 
 function languageTextRisk(language, lower) {
     if (language === "unknown") {
         const t = UNSUPPORTED_TEXT;
+        lower = joinLines(lower);
         if (t.pipeToShell.test(lower) || t.reverseShell.test(lower) || t.envExfiltration.test(lower)
             || t.processSpawn.test(lower)) return "critical";
         if (t.destructiveFs.test(lower) || t.persistence.test(lower)) return "high";
@@ -370,8 +379,9 @@ function inferForbidden(content = "", facts = null, language = "javascript") {
 
     const lower = String(content || "").toLowerCase();
     const forbidden = [];
+    const joined = language === "unknown" ? joinLines(lower) : lower;
     for (const [name, pattern] of LANGUAGE_FORBIDDEN_TEXT[language] || []) {
-        if (pattern.test(lower)) forbidden.push(name);
+        if (pattern.test(joined)) forbidden.push(name);
     }
 
     if (lower.includes("eval(")) forbidden.push("eval");

@@ -64,10 +64,15 @@ on the [tag pipelines](https://gitlab.com/jakubrojicek11/sentinel-ir/-/pipelines
 Check a version yourself (npm 9.5 or newer):
 
 ```sh
-mkdir check && cd check && npm init -y
-npm install sentinel-ir@<version>
+mkdir check
+cd check
+npm init -y
+npm install sentinel-ir@0.5.16
 npm audit signatures
 ```
+
+Replace `0.5.16` with the version you want to check. The commands work as
+they are in bash, zsh, Windows PowerShell 5.1 and cmd.exe.
 
 Every installed package should have a verified registry signature and
 `sentinel-ir` a verified attestation, with nothing reported missing or invalid. Use 0.5.14 or newer:

