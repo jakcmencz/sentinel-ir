@@ -192,12 +192,37 @@ const LANGUAGE_TEXT = {
 const CMD = String.raw`(?:[^\n;&|]|&(?=[^\s&])){0,500}`;
 const PIPE = String.raw`(?<!\|)\|(?!\|)\s*`;
 const SHELL = String.raw`(sudo\s+(-\S+\s+){0,5})?((/usr)?(/local)?/bin/)?(ba|z|da|k|fi)?sh\b`;
+// Patterns with a ${CMD} span cost up to 500 steps per keyword, so they run only when a
+// cheap linear check finds the part that must follow, and each answer is kept for the
+// last text: the same text is checked for risk, forbidden and summary.
+const gated = (gate, pattern) => ({ test: (s) => gate.test(s) && pattern.test(s) });
+const anyOf = (...patterns) => ({ test: (s) => patterns.some((p) => p.test(s)) });
+const remembered = (pattern) => {
+    let last, hit;
+    return { test: (s) => (s === last ? hit : (hit = pattern.test(s), last = s, hit)) };
+};
+const PIPE_SHELL = new RegExp(PIPE + SHELL);
+const SECRET_VAR = /\$\{?\w{0,40}(token|secret|passw(or)?d|api_?key|credentials)/;
+const RECURSIVE = /\s(-[a-z]*r[a-z]*|--recursive)\b/;
 const UNSUPPORTED_TEXT = {
-    pipeToShell: new RegExp(String.raw`\b(curl|wget)\b${CMD}${PIPE}${SHELL}|\bbase64\s+(-d|--decode)\b${CMD}${PIPE}${SHELL}|\b(iex|invoke-expression)\b|\bdownloadstring\s*\(|\bpowershell\b${CMD}\s-(e|enc|encodedcommand)\s`),
-    reverseShell: new RegExp(String.raw`/dev/(tcp|udp)/|\b(nc|ncat|netcat)\b${CMD}\s-[a-z]*[ec]\b`),
-    envExfiltration: new RegExp(String.raw`\b(env|printenv)\s*${PIPE}(curl|wget|nc|ncat|netcat)\b|\b(curl|wget)\b${CMD}\$\{?\w{0,40}(token|secret|passw(or)?d|api_?key|credentials)`),
+    pipeToShell: remembered(anyOf(
+        gated(PIPE_SHELL, new RegExp(String.raw`\b(curl|wget)\b${CMD}${PIPE}${SHELL}|\bbase64\s+(-d|--decode)\b${CMD}${PIPE}${SHELL}`)),
+        /\b(iex|invoke-expression)\b|\bdownloadstring\s*\(/,
+        gated(/\s-(e|enc|encodedcommand)\s/, new RegExp(String.raw`\bpowershell\b${CMD}\s-(e|enc|encodedcommand)\s`))
+    )),
+    reverseShell: remembered(anyOf(
+        /\/dev\/(tcp|udp)\//,
+        gated(/\s-[a-z]*[ec]\b/, new RegExp(String.raw`\b(nc|ncat|netcat)\b${CMD}\s-[a-z]*[ec]\b`))
+    )),
+    envExfiltration: remembered(anyOf(
+        new RegExp(String.raw`\b(env|printenv)\s*${PIPE}(curl|wget|nc|ncat|netcat)\b`),
+        gated(SECRET_VAR, new RegExp(String.raw`\b(curl|wget)\b${CMD}${SECRET_VAR.source}`))
+    )),
     processSpawn: /\b(system|exec|spawn|popen|shell_exec|passthru|proc_open)\s*\(|%x[({[]/,
-    destructiveFs: new RegExp(String.raw`\brm\s+(${CMD}\s)?(-[a-z]*r[a-z]*|--recursive)\b|\bmkfs\b|\bdd\s+if=`),
+    destructiveFs: remembered(anyOf(
+        gated(RECURSIVE, new RegExp(String.raw`\brm\s+(${CMD}\s)?(-[a-z]*r[a-z]*|--recursive)\b`)),
+        /\bmkfs\b|\bdd\s+if=/
+    )),
     persistence: /\bchmod\s+(-r\s+)?(\+x|[0-7]*[1357][0-7]{0,2})\b|\bcrontab\b|authorized_keys|~\/\.(ssh|bashrc|profile|zshrc)\b|>\s*\/etc\//,
     network: /\b(curl|wget|nc|ncat|netcat|socat|scp|rsync|ssh|ftp|tftp|invoke-webrequest|iwr|invoke-restmethod|irm|net\.webclient|downloadstring|downloadfile)\b/,
     crypto: /\b(openssl|gpg|ssh-keygen)\b/

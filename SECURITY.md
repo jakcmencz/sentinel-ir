@@ -67,11 +67,11 @@ Check a version yourself (npm 9.5 or newer):
 mkdir check
 cd check
 npm init -y
-npm install sentinel-ir@0.5.16
+npm install sentinel-ir@0.5.17
 npm audit signatures
 ```
 
-Replace `0.5.16` with the version you want to check. The commands work as
+Replace `0.5.17` with the version you want to check. The commands work as
 they are in bash, zsh, Windows PowerShell 5.1 and cmd.exe.
 
 Every installed package should have a verified registry signature and
