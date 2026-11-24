@@ -37,6 +37,18 @@ instead of being parsed with the wrong grammar. Before 0.5.8 an unknown
 extension was parsed as JavaScript and could come back `complete` and `low`. Source that does not parse falls back to
 text heuristics and the IR says so (`facts.ast: false`).
 
+Since 0.5.16 code in an unsupported language (shell, Makefile, PowerShell,
+Ruby, …) is also checked with text patterns, so an extensionless install
+script is not just `medium`: a download piped into a shell (`curl … | sh`,
+`base64 -d | sh`, `iex … DownloadString`), a reverse shell (`/dev/tcp/`,
+`nc -e`), the environment or a `$…TOKEN` sent with `curl`/`wget`, or
+`system(` / `exec(` / `shell_exec(` is `critical` and named in `forbidden`
+(`pipe_to_shell`, `reverse_shell`, `env_exfiltration`, `process_spawn`);
+`rm -rf`, `mkfs`, `dd if=`, `chmod +x`, `crontab`, `~/.ssh` / `authorized_keys`
+or a write to `/etc/` is `high` (`destructive_fs` for deletes); `curl`,
+`wget`, `ssh`, … alone is `medium`. These are text matches, so a comment or
+a README that shows such a command counts too.
+
 ## Why send IR instead of the raw file
 
 - **Fewer tokens.** The compressed IR has a roughly fixed size of about
@@ -457,6 +469,7 @@ Joins an LLM decision with the IR it was made on:
   `medium` for file writes, network, crypto, secret comparison or `suspicious_text`; otherwise `low`.
   Since 0.5.12 a supported file that did not parse (`analysisStatus: "incomplete"`) is at least `medium`;
   since 0.5.15 so is code in an unsupported language or with an unsupported `target` (before: `low`).
+  Since 0.5.16 unsupported code can be `high` or `critical` from text patterns (see the note under **Supported languages** at the top).
 - `forbidden`: dangerous capabilities found in the file (`eval`,
   `child_process`, `process_spawn`, `unsafe_deserialization`, `native_code`,
   `dynamic_import`, `dynamic_reference`, …).
