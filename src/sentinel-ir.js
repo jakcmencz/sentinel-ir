@@ -180,9 +180,33 @@ const LANGUAGE_TEXT = {
     }
 };
 
+// Text checks for code in an unsupported language (shell, Makefile, Ruby,
+// PowerShell, ...): install scripts are often extensionless, so a script that
+// pipes a download into a shell, opens a reverse shell or sends the
+// environment out must not stay at the generic "medium".
+const SHELL = String.raw`(sudo\s+)?(ba|z|da|k|fi)?sh\b`;
+const UNSUPPORTED_TEXT = {
+    pipeToShell: new RegExp(String.raw`\b(curl|wget)\b[^\n]*\|\s*${SHELL}|\bbase64\s+(-d|--decode)\b[^\n]*\|\s*${SHELL}|\b(iex|invoke-expression)\b|\bdownloadstring\s*\(|\bpowershell\b[^\n]*\s-(e|enc|encodedcommand)\s`),
+    reverseShell: /\/dev\/(tcp|udp)\/|\b(nc|ncat|netcat)\b[^\n|]*\s-[a-z]*[ec]\b/,
+    envExfiltration: /\b(env|printenv)\s*\|\s*(curl|wget|nc|ncat|netcat)\b|\b(curl|wget)\b[^\n]*\$\{?\w*(token|secret|passw(or)?d|api_?key|credentials)\w*/,
+    processSpawn: /\b(system|exec|spawn|popen|shell_exec|passthru|proc_open)\s*\(|%x[({[]/,
+    destructiveFs: /\brm\s+(-[a-z]*r[a-z]*f[a-z]*|-[a-z]*f[a-z]*r[a-z]*|-[a-z]*r[a-z]*\s+-[a-z]*f[a-z]*|-[a-z]*f[a-z]*\s+-[a-z]*r[a-z]*)\b|\bmkfs\b|\bdd\s+if=/,
+    persistence: /\bchmod\s+(-r\s+)?(\+x|[0-7]*[1357][0-7]{0,2})\b|\bcrontab\b|authorized_keys|~\/\.(ssh|bashrc|profile|zshrc)\b|>\s*\/etc\//,
+    network: /\b(curl|wget|nc|ncat|netcat|socat|scp|rsync|ssh|ftp|tftp|invoke-webrequest|iwr|invoke-restmethod|irm|net\.webclient|downloadstring|downloadfile)\b/,
+    crypto: /\b(openssl|gpg|ssh-keygen)\b/
+};
+
 const RISK_ORDER = ["low", "medium", "high", "critical"];
 
 function languageTextRisk(language, lower) {
+    if (language === "unknown") {
+        const t = UNSUPPORTED_TEXT;
+        if (t.pipeToShell.test(lower) || t.reverseShell.test(lower) || t.envExfiltration.test(lower)
+            || t.processSpawn.test(lower)) return "critical";
+        if (t.destructiveFs.test(lower) || t.persistence.test(lower)) return "high";
+        if (t.network.test(lower) || t.crypto.test(lower)) return "medium";
+        return "low";
+    }
     const checks = LANGUAGE_TEXT[language];
     if (!checks) return "low";
     if (checks.critical.test(lower)) return "critical";
@@ -329,6 +353,13 @@ const LANGUAGE_FORBIDDEN_TEXT = {
         ["process_spawn", /\bcommand\s*::\s*new\b|\b(libc|nix)\s*::\s*(\w+\s*::\s*)?(system|popen|v?fork|exec\w*|posix_spawnp?)\b|\bsubprocess\s*::\s*(exec|popen)\b/],
         ["destructive_fs", /\bfs(_err)?\s*::\s*(remove_\w+|rename)\b/],
         ["native_code", /\bunsafe\b|\bextern\s*("|\{)|\b(no_mangle|export_name|link_section)\b|\b(global_|naked_|llvm_)?asm\s*!|\btransmute\b|\b(libloading|dlopen2?|cc|cmake|pkg_config|vcpkg)\s*::|\b(dlopen|dlsym|loadlibrary\w*|getprocaddress)\b|cargo::?rustc-link-/]
+    ],
+    unknown: [
+        ["pipe_to_shell", UNSUPPORTED_TEXT.pipeToShell],
+        ["reverse_shell", UNSUPPORTED_TEXT.reverseShell],
+        ["env_exfiltration", UNSUPPORTED_TEXT.envExfiltration],
+        ["process_spawn", UNSUPPORTED_TEXT.processSpawn],
+        ["destructive_fs", UNSUPPORTED_TEXT.destructiveFs]
     ]
 };
 
@@ -373,11 +404,15 @@ function summarize(content = "", facts = null, language = "javascript") {
         size,
         lines,
         hasCrypto: text.toLowerCase().includes("crypto")
-            || Boolean(LANGUAGE_TEXT[language]?.crypto.test(text.toLowerCase())),
+            || Boolean(LANGUAGE_TEXT[language]?.crypto.test(text.toLowerCase()))
+            || (language === "unknown" && UNSUPPORTED_TEXT.crypto.test(text.toLowerCase())),
         hasFilesystem: text.toLowerCase().includes("fs.")
-            || Boolean(LANGUAGE_TEXT[language]?.high.test(text.toLowerCase())),
+            || Boolean(LANGUAGE_TEXT[language]?.high.test(text.toLowerCase()))
+            || (language === "unknown" && (UNSUPPORTED_TEXT.destructiveFs.test(text.toLowerCase())
+                || UNSUPPORTED_TEXT.persistence.test(text.toLowerCase()))),
         hasNetwork: NET_TEXT.test(text.toLowerCase())
             || Boolean(LANGUAGE_TEXT[language]?.network.test(text.toLowerCase()))
+            || (language === "unknown" && UNSUPPORTED_TEXT.network.test(text.toLowerCase()))
     };
 }
 
