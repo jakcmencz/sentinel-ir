@@ -69,7 +69,8 @@ test('a long untrusted line is checked in bounded time', () => {
   const lines = [
     'curl '.repeat(200000), 'rm '.repeat(200000), 'curl -d $'.repeat(100000), 'base64 -d '.repeat(100000),
     // the part that has to follow is there, so the slow pattern does run (once)
-    'curl '.repeat(200000) + '| sh', 'rm '.repeat(200000) + ' -r', 'curl '.repeat(200000) + '$token', 'nc '.repeat(300000) + ' -e'
+    'curl '.repeat(200000) + '| sh', 'rm '.repeat(200000) + ' -r', 'curl '.repeat(200000) + '$token', 'nc '.repeat(300000) + ' -e',
+    'rm -' + 'r'.repeat(1000000) + '_'
   ];
   for (const line of lines) {
     const started = Date.now();

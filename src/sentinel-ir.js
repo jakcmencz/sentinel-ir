@@ -203,7 +203,7 @@ const remembered = (pattern) => {
 };
 const PIPE_SHELL = new RegExp(PIPE + SHELL);
 const SECRET_VAR = /\$\{?\w{0,40}(token|secret|passw(or)?d|api_?key|credentials)/;
-const RECURSIVE = /\s(-[a-z]*r[a-z]*|--recursive)\b/;
+const RECURSIVE = /\s(-(?=[a-z]*r)[a-z]+|--recursive)\b/;
 const UNSUPPORTED_TEXT = {
     pipeToShell: remembered(anyOf(
         gated(PIPE_SHELL, new RegExp(String.raw`\b(curl|wget)\b${CMD}${PIPE}${SHELL}|\bbase64\s+(-d|--decode)\b${CMD}${PIPE}${SHELL}`)),
@@ -220,7 +220,7 @@ const UNSUPPORTED_TEXT = {
     )),
     processSpawn: /\b(system|exec|spawn|popen|shell_exec|passthru|proc_open)\s*\(|%x[({[]/,
     destructiveFs: remembered(anyOf(
-        gated(RECURSIVE, new RegExp(String.raw`\brm\s+(${CMD}\s)?(-[a-z]*r[a-z]*|--recursive)\b`)),
+        gated(RECURSIVE, new RegExp(String.raw`\brm\s+(${CMD}\s)?(-(?=[a-z]*r)[a-z]+|--recursive)\b`)),
         /\bmkfs\b|\bdd\s+if=/
     )),
     persistence: /\bchmod\s+(-r\s+)?(\+x|[0-7]*[1357][0-7]{0,2})\b|\bcrontab\b|authorized_keys|~\/\.(ssh|bashrc|profile|zshrc)\b|>\s*\/etc\//,
